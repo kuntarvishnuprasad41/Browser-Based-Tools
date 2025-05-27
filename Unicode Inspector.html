@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offline Unicode Character Inspector</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Configure Tailwind CSS for dark mode based on media query
+        tailwind.config = {
+          darkMode: 'media', // This is the default, but explicitly stating it can be good.
+          theme: {
+            extend: {},
+          }
+        }
+    </script>
+    <script src="Blocks.js" defer onerror="handleBlocksJsError()"></script>
+    <script src="UnicodeData.js" defer onerror="handleUnicodeDataJsError()"></script>
+    <script src="ChartLinks.js" defer onerror="handleChartLinksJsError()"></script> 
+    <script src="EmojiData.js" defer onerror="handleEmojiDataJsError()"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        .table-cell-valign { vertical-align: middle; }
+        .download-icon {
+            display: inline-block;
+            width: 0.8em;
+            height: 0.8em;
+            margin-left: 0.25em;
+            vertical-align: middle;
+        }
+    </style>
+    </head>
+<body class="bg-stone-100 text-stone-800 min-h-screen flex flex-col items-center py-8 px-4 dark:bg-stone-900 dark:text-stone-200">
+
+    <div class="w-full max-w-7xl bg-white p-6 sm:p-8 rounded-xl shadow-lg dark:bg-stone-800 dark:shadow-none">
+        <header class="mb-8 text-center">
+            <h1 class="text-3xl sm:text-6xl font-bold text-sky-700 dark:text-sky-850">Unicode Inspector</h1>
+            <p class="text-stone-600 mt-2 dark:text-stone-400">Paste your text below or use the lookup options to analyze Unicode characters and sequences.</p>
+        </header>
+
+        <div id="setupContainer" class="hidden">
+            <section class="mb-6 p-4 bg-gray-100 border border-gray-300 rounded-lg dark:bg-stone-700 dark:border-stone-600">
+                <h3 class="text-lg font-semibold text-gray-800 mb-2 dark:text-stone-200">One-Time Setup: Download The Latest Data From Unicode.org</h3>
+                <p class="text-sm text-stone-700 mb-3 dark:text-stone-300">
+                    For the most details about Unicode characters, you'll need to generate some local files using Unicode character data hosted by Unicode.org (the official site for Unicode). 
+                </p>
+                <ol class="list-decimal list-inside text-sm text-stone-700 space-y-1 dark:text-stone-300">
+                    <li>Download each required <code>.txt</code> file from unicode.org.</li>
+                    <li>Use the "Choose File" buttons to select that same downloaded <code>.txt</code> file.</li>
+                    <li>Click the "Generate [Filename].js" button.</li>
+                    <li>Save the generated <code>.js</code> file into the <strong>same folder</strong> as this HTML file.</li>
+                    <li>Refresh this page after all are generated. From now on, the tool will automatically load the data. (You can delete the <code>.txt</code> files)</li>
+                </ol>
+                <p class="text-xs text-stone-500 mt-3 dark:text-stone-400">
+                    If <code>.js</code> files are not found or are invalid, the tool will use built-in limited data. The setup sections below will appear if their corresponding <code>.js</code> file is missing.
+                </p>
+            </section>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+                <section id="blocksSetupSection" class="p-4 bg-sky-50 border border-sky-200 rounded-lg hidden dark:bg-sky-900 dark:border-sky-700">
+                    <h3 class="text-lg font-semibold text-sky-700 mb-2 dark:text-sky-300">Blocks.js Setup</h3>
+                    <p id="blocksSetupInstructions" class="text-xs text-stone-600 mb-1 dark:text-stone-300">Select <code>Blocks.txt</code>.</p>
+                    <p class="text-xs text-stone-500 mb-2 dark:text-stone-400">(Download From: <a href="https://www.unicode.org/Public/UNIDATA/Blocks.txt" target="_blank" rel="noopener noreferrer" class="text-sky-600 hover:text-sky-800 underline dark:text-sky-300 dark:hover:text-sky-100">unicode.org/Public/UNIDATA/Blocks.txt <svg class="download-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v4a1 1 0 102 0V7zM9 9a1 1 0 000 2h2a1 1 0 100-2H9z" clip-rule="evenodd" /><path d="M4.53 4.53a.75.75 0 00-1.06 1.06l7.5 7.5a.75.75 0 001.06 0l7.5-7.5a.75.75 0 00-1.06-1.06L12 10.94l-6.47-6.47z" transform="translate(0 5)"/></svg></a>)</p>
+                    <input type="file" id="blocksFileUpload" accept=".txt" class="block w-full text-sm file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-sky-100 file:text-sky-700 hover:file:bg-sky-200 cursor-pointer dark:file:bg-sky-700 dark:file:text-sky-100 dark:hover:file:bg-sky-600"/>
+                    <button id="blocksGenerateButton" class="mt-2 w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-1 px-2 text-xs rounded shadow disabled:bg-stone-400 dark:disabled:bg-stone-600" disabled>Generate Blocks.js</button>
+                </section>
+
+                <section id="unicodeDataSetupSection" class="p-4 bg-orange-50 border border-orange-200 rounded-lg hidden dark:bg-orange-900 dark:border-orange-700">
+                    <h3 class="text-lg font-semibold text-orange-700 mb-2 dark:text-orange-300">UnicodeData.js Setup</h3>
+                    <p id="unicodeDataSetupInstructions" class="text-xs text-stone-600 mb-1 dark:text-stone-300">Select <code>UnicodeData.txt</code>.</p>
+                    <p class="text-xs text-stone-500 mb-2 dark:text-stone-400">(Download From: <a href="https://www.unicode.org/Public/UNIDATA/UnicodeData.txt" target="_blank" rel="noopener noreferrer" class="text-orange-600 hover:text-orange-800 underline dark:text-orange-300 dark:hover:text-orange-100">unicode.org/Public/UNIDATA/UnicodeData.txt <svg class="download-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v4a1 1 0 102 0V7zM9 9a1 1 0 000 2h2a1 1 0 100-2H9z" clip-rule="evenodd" /><path d="M4.53 4.53a.75.75 0 00-1.06 1.06l7.5 7.5a.75.75 0 001.06 0l7.5-7.5a.75.75 0 00-1.06-1.06L12 10.94l-6.47-6.47z" transform="translate(0 5)"/></svg></a>)</p>
+                    <input type="file" id="unicodeDataFileUpload" accept=".txt" class="block w-full text-sm file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-orange-100 file:text-orange-700 hover:file:bg-orange-200 cursor-pointer dark:file:bg-orange-700 dark:file:text-orange-100 dark:hover:file:bg-orange-600"/>
+                    <button id="unicodeDataGenerateButton" class="mt-2 w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-1 px-2 text-xs rounded shadow disabled:bg-stone-400 dark:disabled:bg-stone-600" disabled>Generate UnicodeData.js</button>
+                </section>
+
+                <section id="chartLinksSetupSection" class="p-4 bg-teal-50 border border-teal-200 rounded-lg hidden dark:bg-teal-900 dark:border-teal-700">
+                    <h3 class="text-lg font-semibold text-teal-700 mb-2 dark:text-teal-300">ChartLinks.js Setup</h3>
+                    <p id="chartLinksSetupInstructions" class="text-xs text-stone-600 mb-1 dark:text-stone-300">Select <code>unversionedchartlist.txt</code>.</p>
+                    <p class="text-xs text-stone-500 mb-2 dark:text-stone-400">(Download From: <a href="https://www.unicode.org/charts/PDF/unversionedchartlist.txt" target="_blank" rel="noopener noreferrer" class="text-teal-600 hover:text-teal-800 underline dark:text-teal-300 dark:hover:text-teal-100">unicode.org/charts/PDF/unversionedchartlist.txt <svg class="download-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v4a1 1 0 102 0V7zM9 9a1 1 0 000 2h2a1 1 0 100-2H9z" clip-rule="evenodd" /><path d="M4.53 4.53a.75.75 0 00-1.06 1.06l7.5 7.5a.75.75 0 001.06 0l7.5-7.5a.75.75 0 00-1.06-1.06L12 10.94l-6.47-6.47z" transform="translate(0 5)"/></svg></a>)</p>
+                    <input type="file" id="chartLinksFileUpload" accept=".txt" class="block w-full text-sm file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-teal-100 file:text-teal-700 hover:file:bg-teal-200 cursor-pointer dark:file:bg-teal-700 dark:file:text-teal-100 dark:hover:file:bg-teal-600"/>
+                    <button id="chartLinksGenerateButton" class="mt-2 w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-1 px-2 text-xs rounded shadow disabled:bg-stone-400 dark:disabled:bg-stone-600" disabled>Generate ChartLinks.js</button>
+                </section>
+
+                <section id="emojiDataSetupSection" class="p-4 bg-purple-50 border border-purple-200 rounded-lg hidden dark:bg-purple-900 dark:border-purple-700">
+                    <h3 class="text-lg font-semibold text-purple-700 mb-2 dark:text-purple-300">EmojiData.js Setup</h3>
+                    <p id="emojiDataSetupInstructions" class="text-xs text-stone-600 mb-1 dark:text-stone-300">Select <code>emoji-ordering.txt</code>.</p>
+                    <p class="text-xs text-stone-500 mb-2 dark:text-stone-400">(Download From: <a href="https://unicode.org/emoji/charts/emoji-ordering.txt" target="_blank" rel="noopener noreferrer" class="text-purple-600 hover:text-purple-800 underline dark:text-purple-300 dark:hover:text-purple-100">unicode.org/emoji/charts/emoji-ordering.txt <svg class="download-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v4a1 1 0 102 0V7zM9 9a1 1 0 000 2h2a1 1 0 100-2H9z" clip-rule="evenodd" /><path d="M4.53 4.53a.75.75 0 00-1.06 1.06l7.5 7.5a.75.75 0 001.06 0l7.5-7.5a.75.75 0 00-1.06-1.06L12 10.94l-6.47-6.47z" transform="translate(0 5)"/></svg></a>)</p>
+                    <input type="file" id="emojiDataFileUpload" accept=".txt" class="block w-full text-sm file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-purple-100 file:text-purple-700 hover:file:bg-purple-200 cursor-pointer dark:file:bg-purple-700 dark:file:text-purple-100 dark:hover:file:bg-purple-600"/>
+                    <button id="emojiDataGenerateButton" class="mt-2 w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-1 px-2 text-xs rounded shadow disabled:bg-stone-400 dark:disabled:bg-stone-600" disabled>Generate EmojiData.js</button>
+                </section>
+            </div>
+            <hr class="my-8 border-stone-300 dark:border-stone-600">
+        </div>
+
+        <section class="mb-8 p-4 bg-indigo-50 border border-indigo-200 rounded-lg dark:bg-slate-900 dark:border-indigo-700">
+            <h3 class="text-xl font-semibold text-indigo-700 mb-4 dark:text-indigo-300">Lookup Specific Characters</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label for="codepointInput" class="block text-sm font-medium text-stone-700 mb-1 dark:text-stone-300">By Codepoint (Hex, e.g., 0041 or U+1F600)</label>
+                    <div class="flex">
+                        <input type="text" id="codepointInput" class="flex-grow p-2 border border-stone-300 rounded-l-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-stone-700 dark:border-stone-600 dark:text-stone-100 dark:focus:ring-indigo-400 dark:focus:border-indigo-400" placeholder="e.g., U+0041">
+                        <button id="lookupByCodepointButton" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-r-lg dark:bg-indigo-700 dark:hover:bg-indigo-600">Lookup</button>
+                    </div>
+                </div>
+                <div>
+                    <label for="nameInput" class="block text-sm font-medium text-stone-700 mb-1 dark:text-stone-300">By Name (contains, case-insensitive)</label>
+                    <div class="flex">
+                        <input type="text" id="nameInput" class="flex-grow p-2 border border-stone-300 rounded-l-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-stone-700 dark:border-stone-600 dark:text-stone-100 dark:focus:ring-indigo-400 dark:focus:border-indigo-400" placeholder="e.g., LATIN SMALL LETTER A">
+                        <button id="lookupByNameButton" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-r-lg dark:bg-indigo-700 dark:hover:bg-indigo-600">Lookup</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <section class="mb-2 px-6 pb-2 bg-blue-50 border border-slate-200 rounded-lg dark:bg-gray-800 dark:border-blue-800">
+            <div id="lookupMessageArea" class="text-sm text-stone-600 mb-3 p-2 bg-stone-50 rounded-lg border border-stone-200 hidden dark:bg-stone-700 dark:border-stone-600 dark:text-stone-300"></div>
+            <label for="textInput" class="block text-2xl mt-4 mb-4 font-semibold text-stone-700 dark:text-stone-200">Input Text:</label>
+            <textarea id="textInput" rows="8" class="w-full p-3 border border-stone-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors dark:bg-stone-700 dark:border-stone-600 dark:text-stone-100 dark:focus:ring-sky-400 dark:focus:border-sky-400" placeholder="Paste text here... e.g., Hello World! 👋 € α 👍"></textarea>
+            <button id="analyzeButton" class="block w-full mt-4 mb-4 sm:w-auto bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-opacity-50 dark:bg-sky-700 dark:hover:bg-sky-600 dark:focus:ring-sky-400">Analyze Text</button>
+        </section>
+
+        <section id="emojiSequenceSection" class="mb-8 hidden">
+            <h2 class="text-2xl font-semibold text-stone-700 mt-8 mb-4 dark:text-stone-200">Emoji Sequence Details:</h2>
+            <div class="overflow-x-auto rounded-lg border border-stone-200 shadow-sm dark:border-stone-700">
+                <table id="emojiSequenceTable" class="min-w-full divide-y divide-stone-300 dark:divide-stone-600">
+                    <thead class="bg-stone-200 dark:bg-stone-700">
+                        <tr>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">Sequence</th>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">Name</th>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">Codepoints (U+)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="emojiSequenceBody" class="bg-white divide-y divide-stone-200 dark:bg-stone-800 dark:divide-stone-700">
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        
+        <section id="individualCharacterDetailsSection" class="hidden">
+            <h2 class="text-2xl font-semibold text-stone-700 mt-8 mb-4 dark:text-stone-200">Individual Character Details:</h2>
+            <div id="messageArea" class="text-stone-600 mb-4 p-4 bg-stone-50 rounded-lg border border-stone-200 dark:bg-stone-700 dark:border-stone-600 dark:text-stone-300">
+                Paste text above or use lookup options, then click 'Analyze Text Above' to see character details.
+            </div>
+            <div class="overflow-x-auto rounded-lg border border-stone-200 shadow-sm dark:border-stone-700">
+                <table id="resultsTable" class="min-w-full divide-y divide-stone-300 hidden dark:divide-stone-600">
+                    <thead class="bg-stone-200 dark:bg-stone-700">
+                        <tr>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">Char</th>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">Codepoint (U+)</th>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">Name</th>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">Code Point</th>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">UTF-8</th>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">UTF-16</th>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">UTF-16 LE</th>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">Block</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsBody" class="bg-white divide-y divide-stone-200 dark:bg-stone-800 dark:divide-stone-700">
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="blocksSummarySection" class="mt-8 mb-8 hidden">
+            <h2 class="text-2xl font-semibold text-stone-700 mb-4 dark:text-stone-200">Unicode Blocks in Text:</h2>
+            <div class="overflow-x-auto rounded-lg border border-stone-200 shadow-sm dark:border-stone-700">
+                <table id="blocksSummaryTable" class="min-w-full divide-y divide-stone-300 dark:divide-stone-600">
+                    <thead class="bg-stone-200 dark:bg-stone-700">
+                        <tr>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">Block Name</th>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">Range (Hex)</th>
+                            <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-stone-600 uppercase tracking-wider dark:text-stone-300">Chart</th>
+                        </tr>
+                    </thead>
+                    <tbody id="blocksSummaryBody" class="bg-white divide-y divide-stone-200 dark:bg-stone-800 dark:divide-stone-700">
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <footer class="mt-12 text-center text-stone-500 text-sm w-full max-w-7xl dark:text-stone-400">
+        <div id="dataStatusFooter" class="p-4 bg-stone-100 rounded-lg text-sm text-stone-700 border border-stone-200 hidden dark:bg-stone-800 dark:border-stone-700 dark:text-stone-300">
+             <h3 class="font-semibold text-base text-stone-800 mb-3 text-center dark:text-stone-200">Data File Status</h3>
+             <div id="statusGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div id="blocksStatus" class="p-3 bg-white rounded-lg border border-stone-300 shadow-sm dark:bg-stone-700 dark:border-stone-600"></div>
+                <div id="unicodeDataStatus" class="p-3 bg-white rounded-lg border border-stone-300 shadow-sm dark:bg-stone-700 dark:border-stone-600"></div>
+                <div id="chartLinksStatus" class="p-3 bg-white rounded-lg border border-stone-300 shadow-sm dark:bg-stone-700 dark:border-stone-600"></div>
+                <div id="emojiDataStatus" class="p-3 bg-white rounded-lg border border-stone-300 shadow-sm dark:bg-stone-700 dark:border-stone-600"></div>
+             </div>
+        </div>
+        <p class="mt-4">ThioJoe &copy; 2025.</p>
+    </footer>
+
+    <script>
+        let blocksJsLoaded = false; 
+        let unicodeDataJsLoaded = false; 
+        let chartLinksJsLoaded = false;
+        let emojiDataJsLoaded = false;
+
+        function handleBlocksJsError() { blocksJsLoaded = false; }
+        function handleUnicodeDataJsError() { unicodeDataJsLoaded = false; }
+        function handleChartLinksJsError() { chartLinksJsLoaded = false; }
+        function handleEmojiDataJsError() { emojiDataJsLoaded = false; }
+
+
+        const textInputElement = document.getElementById('textInput');
+        const analyzeButtonElement = document.getElementById('analyzeButton');
+        const resultsTableElement = document.getElementById('resultsTable');
+        const resultsBodyElement = document.getElementById('resultsBody');
+        const messageAreaElement = document.getElementById('messageArea');
+        const lookupMessageAreaElement = document.getElementById('lookupMessageArea');
+
+        const blocksSummarySectionElement = document.getElementById('blocksSummarySection');
+        const blocksSummaryBodyElement = document.getElementById('blocksSummaryBody');
+        const emojiSequenceSectionElement = document.getElementById('emojiSequenceSection');
+        const emojiSequenceBodyElement = document.getElementById('emojiSequenceBody');
+		const individualCharacterDetailsSectionElement = document.getElementById('individualCharacterDetailsSection');
+        
+        const setupContainerElement = document.getElementById('setupContainer');
+
+        const blocksSetupSectionElement = document.getElementById('blocksSetupSection');
+        const blocksSetupInstructionsElement = document.getElementById('blocksSetupInstructions');
+        const blocksFileUploadElement = document.getElementById('blocksFileUpload');
+        const blocksGenerateButtonElement = document.getElementById('blocksGenerateButton');
+        let selectedBlocksFileContent = null;
+
+        const unicodeDataSetupSectionElement = document.getElementById('unicodeDataSetupSection');
+        const unicodeDataSetupInstructionsElement = document.getElementById('unicodeDataSetupInstructions');
+        const unicodeDataFileUploadElement = document.getElementById('unicodeDataFileUpload');
+        const unicodeDataGenerateButtonElement = document.getElementById('unicodeDataGenerateButton');
+        let selectedUnicodeDataFileContent = null;
+
+        const chartLinksSetupSectionElement = document.getElementById('chartLinksSetupSection');
+        const chartLinksSetupInstructionsElement = document.getElementById('chartLinksSetupInstructions');
+        const chartLinksFileUploadElement = document.getElementById('chartLinksFileUpload');
+        const chartLinksGenerateButtonElement = document.getElementById('chartLinksGenerateButton');
+        let selectedChartLinksFileContent = null;
+
+        const emojiDataSetupSectionElement = document.getElementById('emojiDataSetupSection');
+        const emojiDataSetupInstructionsElement = document.getElementById('emojiDataSetupInstructions');
+        const emojiDataFileUploadElement = document.getElementById('emojiDataFileUpload');
+        const emojiDataGenerateButtonElement = document.getElementById('emojiDataGenerateButton');
+        let selectedEmojiDataFileContent = null;
+
+
+        // Lookup elements
+        const codepointInputElement = document.getElementById('codepointInput');
+        const lookupByCodepointButtonElement = document.getElementById('lookupByCodepointButton');
+        const nameInputElement = document.getElementById('nameInput');
+        const lookupByNameButtonElement = document.getElementById('lookupByNameButton');
+
+        const utf8Encoder = new TextEncoder();
+
+        let unicodeBlocks = [ 
+            { start: 0x0000, end: 0x007F, name: "Basic Latin" },
+            { start: 0x0080, end: 0x00FF, name: "Latin-1 Supplement" },
+            { start: 0x2000, end: 0x206F, name: "General Punctuation" }
+        ];
+        let unicodeCharacterNames = {}; 
+        let unicodeAlgorithmicNameRangesArray = []; 
+        let unicodeChartLinks = {}; 
+        let emojiSequenceData = {}; // Stores { "CODPOINT SEQUENCE": { emoji: "😀", name: "grinning face" } }
+
+        analyzeButtonElement.addEventListener('click', () => analyzeText(textInputElement.value));
+        lookupByCodepointButtonElement.addEventListener('click', handleLookupByCodepoint);
+        lookupByNameButtonElement.addEventListener('click', handleLookupByName);
+        
+        function showLookupMessage(message, isError = false) { showMessageInArea(lookupMessageAreaElement, message, isError); }
+        
+        function showMessageInArea(areaElement, message, isError = false) {
+            areaElement.textContent = message;
+            areaElement.classList.remove('hidden');
+            areaElement.classList.toggle('text-red-600', isError);
+            areaElement.classList.toggle('text-green-600', !isError && message.includes('successfully'));
+            areaElement.classList.toggle('text-blue-600', !isError && !message.includes('successfully') && !message.includes('Error') && !message.includes('found'));
+            areaElement.classList.toggle('text-orange-600', !isError && (message.includes('No character found') || message.includes('No characters found')));
+        }
+
+        function setupFileUploader(fileInputElement, generateButtonElement, instructionElement, contentVarSetter, successCallback) {
+            fileInputElement.addEventListener('change', (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    contentVarSetter(e.target.result);
+                    generateButtonElement.disabled = false;
+                    instructionElement.innerHTML = `File <code>${file.name}</code> ready. Click to generate.`;
+                    instructionElement.classList.add('text-green-700', 'font-semibold');
+                };
+                reader.readAsText(file);
+            });
+            generateButtonElement.addEventListener('click', successCallback);
+        }
+        
+        setupFileUploader(blocksFileUploadElement, blocksGenerateButtonElement, blocksSetupInstructionsElement, (content) => selectedBlocksFileContent = content, generateAndDownloadBlocksJs);
+        setupFileUploader(unicodeDataFileUploadElement, unicodeDataGenerateButtonElement, unicodeDataSetupInstructionsElement, (content) => selectedUnicodeDataFileContent = content, generateAndDownloadUnicodeDataJs);
+        setupFileUploader(chartLinksFileUploadElement, chartLinksGenerateButtonElement, chartLinksSetupInstructionsElement, (content) => selectedChartLinksFileContent = content, generateAndDownloadChartLinksJs);
+        setupFileUploader(emojiDataFileUploadElement, emojiDataGenerateButtonElement, emojiDataSetupInstructionsElement, (content) => selectedEmojiDataFileContent = content, generateAndDownloadEmojiDataJs);
+
+
+        function generateAndDownloadBlocksJs() {
+            if (!selectedBlocksFileContent) { showLookupMessage('No file content for Blocks.js.', true); return; }
+            const jsContent = `const EXTERNAL_UNICODE_BLOCKS_DATA = \`${selectedBlocksFileContent}\`;`;
+            downloadJsFile(jsContent, 'Blocks.js');
+            blocksSetupInstructionsElement.innerHTML = "Download started! Save <code>Blocks.js</code> in this folder, then refresh.";
+        }
+        function generateAndDownloadUnicodeDataJs() {
+            if (!selectedUnicodeDataFileContent) { showLookupMessage('No file content for UnicodeData.js.', true); return; }
+            const parsedData = parseUnicodeData(selectedUnicodeDataFileContent);
+            if (Object.keys(parsedData.characterNames).length === 0 && parsedData.algorithmicNameRanges.length === 0) {
+                showLookupMessage('Could not parse any data from UnicodeData.txt.', true); return;
+            }
+            const namesObjStr = JSON.stringify(parsedData.characterNames); 
+            const rangesArrayStr = JSON.stringify(parsedData.algorithmicNameRanges); 
+            const jsContent = `const EXTERNAL_UNICODE_CHARACTER_NAMES = ${namesObjStr};\nconst EXTERNAL_UNICODE_ALGORITHMIC_RANGES = ${rangesArrayStr};`;
+            downloadJsFile(jsContent, 'UnicodeData.js');
+            unicodeDataSetupInstructionsElement.innerHTML = "Download started! Save <code>UnicodeData.js</code> in this folder, then refresh.";
+        }
+        function generateAndDownloadChartLinksJs() {
+            if (!selectedChartLinksFileContent) { showLookupMessage('No file content for ChartLinks.js.', true); return; }
+            const parsedLinks = parseChartListTxt(selectedChartLinksFileContent);
+             if (Object.keys(parsedLinks).length === 0) { showLookupMessage('Could not parse chart links.', true); return; }
+            const linksObjStr = JSON.stringify(parsedLinks); 
+            const jsContent = `const EXTERNAL_UNICODE_CHART_LINKS = ${linksObjStr};`;
+            downloadJsFile(jsContent, 'ChartLinks.js');
+            chartLinksSetupInstructionsElement.innerHTML = "Download started! Save <code>ChartLinks.js</code> in this folder, then refresh.";
+        }
+         function generateAndDownloadEmojiDataJs() {
+            if (!selectedEmojiDataFileContent) { showLookupMessage('No file content for EmojiData.js.', true); return; }
+            const parsedEmoji = parseEmojiOrderingTxt(selectedEmojiDataFileContent);
+            if (Object.keys(parsedEmoji).length === 0) { showLookupMessage('Could not parse emoji data.', true); return; }
+            const emojiObjStr = JSON.stringify(parsedEmoji); 
+            const jsContent = `const EXTERNAL_EMOJI_SEQUENCES = ${emojiObjStr};`;
+            downloadJsFile(jsContent, 'EmojiData.js');
+            emojiDataSetupInstructionsElement.innerHTML = "Download started! Save <code>EmojiData.js</code> in this folder, then refresh.";
+        }
+
+
+        function downloadJsFile(content, filename) {
+            const blob = new Blob([content], { type: 'application/javascript' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        
+        function parseBlocksTxt(data) {
+            const lines = data.split('\n');
+            const blocks = [];
+            const blockRegex = /^([0-9A-Fa-f]{4,6})\.\.([0-9A-Fa-f]{4,6});\s*(.+)$/;
+            for (const line of lines) {
+                if (line.startsWith('#') || line.trim() === '') { continue; }
+                const match = line.match(blockRegex);
+                if (match) {
+                    blocks.push({ start: parseInt(match[1], 16), end: parseInt(match[2], 16), name: match[3].trim() });
+                }
+            }
+            return blocks;
+        }
+
+        function parseUnicodeData(data) {
+            const characterNames = {};
+            const algorithmicNameRanges = [];
+            const lines = data.split('\n');
+            let currentRange = null;
+
+            for (const line of lines) {
+                if (line.trim() === '' || line.startsWith('#')) continue;
+                const parts = line.split(';');
+                if (parts.length < 2) continue;
+
+                const codepointHex = parts[0].toUpperCase();
+                let name = parts[1];
+
+                if (name.startsWith('<') && name.endsWith(', First>')) {
+                    const baseName = name.substring(1, name.length - ', First>'.length);
+                    let type = 'GENERIC_RANGE';
+                    let namePrefix = baseName.toUpperCase() + " ";
+                    if (baseName.includes('CJK Ideograph')) type = 'CJK';
+                    else if (baseName.includes('Hangul Syllable')) type = 'HANGUL';
+                    else if (baseName.includes('Surrogate')) type = 'SURROGATE';
+                    else if (baseName.includes('Private Use')) type = 'PRIVATE_USE';
+                    
+                    currentRange = {
+                        start: parseInt(codepointHex, 16),
+                        namePrefix: namePrefix,
+                        baseName: baseName, 
+                        type: type
+                    };
+                } else if (name.startsWith('<') && name.endsWith(', Last>')) {
+                    if (currentRange && name.substring(1, name.length - ', Last>'.length) === currentRange.baseName) {
+                        currentRange.end = parseInt(codepointHex, 16);
+                        if (currentRange.type === 'CJK') currentRange.namePrefix = 'CJK UNIFIED IDEOGRAPH-';
+                        else if (currentRange.type === 'HANGUL') currentRange.namePrefix = 'HANGUL SYLLABLE ';
+                        algorithmicNameRanges.push({...currentRange});
+                        currentRange = null;
+                    }
+                } else if (name === "<control>") {
+                    characterNames[codepointHex] = (parts.length > 10 && parts[10]) ? parts[10] : `CONTROL CHARACTER ${codepointHex}`;
+                } else {
+                    characterNames[codepointHex] = name;
+                }
+            }
+            return { characterNames, algorithmicNameRanges };
+        }
+
+        function parseChartListTxt(data) {
+            const chartLinks = {};
+            const lines = data.split('\n');
+            const chartRegex = /U([0-9A-Fa-f]{4,6})\.pdf$/; 
+            for (const line of lines) {
+                const parts = line.trim().split(/\s+/); 
+                if (parts.length > 0) {
+                    const lastPart = parts[parts.length - 1]; 
+                    const match = lastPart.match(chartRegex);
+                    if (match) {
+                        const codepointStartHex = match[1].toUpperCase(); 
+                        chartLinks[codepointStartHex] = lastPart; 
+                    }
+                }
+            }
+            return chartLinks;
+        }
+
+        function parseEmojiOrderingTxt(data) {
+            const emojiMap = {};
+            const lines = data.split('\n');
+            for (const line of lines) {
+                if (line.startsWith('#') || line.trim() === '') continue;
+                const parts = line.split(';');
+                if (parts.length < 2) continue;
+
+                const codepointSequenceStr = parts[0].trim().replace(/U\+/g, '').toUpperCase(); 
+                
+                const commentPart = parts.slice(1).join(';'); 
+                const hashIndex = commentPart.indexOf('#');
+                if (hashIndex === -1) continue;
+
+                const emojiCharAndName = commentPart.substring(hashIndex + 1).trim();
+                let emojiChar = "";
+                let name = "";
+                let nameStartIndex = 0;
+
+                // Heuristic to extract the emoji character(s) first
+                // This tries to grab the visible emoji and treat the rest as its name
+                let k = 0;
+                while(k < emojiCharAndName.length) {
+                    const firstSpaceIndex = emojiCharAndName.indexOf(' ', k);
+                    const potentialEmoji = (firstSpaceIndex === -1) ? emojiCharAndName.substring(k) : emojiCharAndName.substring(k, firstSpaceIndex);
+                    
+                    // Check if the potentialEmoji is likely an emoji or part of one
+                    // This is a simplified check; a more robust one might check Unicode properties
+                    let isLikelyEmoji = false;
+                    if (potentialEmoji.length > 0) {
+                        const cp = potentialEmoji.codePointAt(0);
+                        if (cp > 0xFFF || (cp >= 0x2600 && cp <= 0x27BF) || potentialEmoji.includes('\u200D') || potentialEmoji.includes('\uFE0F')) {
+                            isLikelyEmoji = true;
+                        }
+                    }
+
+                    if (isLikelyEmoji) {
+                        emojiChar += potentialEmoji;
+                        k = (firstSpaceIndex === -1) ? emojiCharAndName.length : firstSpaceIndex + 1;
+                        if (firstSpaceIndex !== -1 && emojiCharAndName.charAt(k-1) === ' ' && emojiCharAndName.charAt(k) !== ' ') {
+                             // if there was a space, and next is not a space, it's likely the start of the name
+                        } else if (firstSpaceIndex !== -1) {
+                             emojiChar += ' '; // keep space if it's part of multi-char emoji like flags
+                        }
+                    } else {
+                        break; // Assume rest is the name
+                    }
+                }
+                emojiChar = emojiChar.trim();
+                name = emojiCharAndName.substring(k).trim();
+
+                if (!emojiChar && name) { // If emojiChar is empty but name is not, take first "word" as emoji
+                     const nameParts = name.split(' ');
+                     emojiChar = nameParts[0];
+                     name = nameParts.slice(1).join(' ');
+                }
+                if (!name && emojiChar) { // If name is empty but emojiChar is not, it might be that the whole thing was emoji
+                    name = emojiChar; // This can happen for single char emoji where the split logic fails.
+                }
+
+
+                if (codepointSequenceStr && name && emojiChar) {
+                    emojiMap[codepointSequenceStr] = { emoji: emojiChar, name: name };
+                } else if (codepointSequenceStr && emojiCharAndName) { // Fallback if parsing is tricky
+                     emojiMap[codepointSequenceStr] = { emoji: emojiCharAndName.split(' ')[0], name: emojiCharAndName.substring(emojiCharAndName.indexOf(' ')+1).trim() };
+                }
+            }
+            return emojiMap;
+        }
+
+        function renderStatus(element, isLoaded, name, details, sourceUrl, sourceFileName, contentVarSetter, generationFunction) {
+            element.innerHTML = ''; // Clear previous content
+
+            const statusDiv = document.createElement('div');
+            statusDiv.className = 'font-semibold flex items-center';
+
+            const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            icon.setAttribute('class', `flex-shrink-0 w-5 h-5 mr-2 ${isLoaded ? 'text-green-600' : 'text-red-600'}`);
+            icon.setAttribute('viewBox', '0 0 20 20');
+            icon.setAttribute('fill', 'currentColor');
+            if (isLoaded) {
+                icon.innerHTML = `<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />`;
+            } else {
+                icon.innerHTML = `<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />`;
+            }
+
+            statusDiv.appendChild(icon);
+            statusDiv.appendChild(document.createTextNode(name));
+
+            const detailsP = document.createElement('p');
+            detailsP.className = 'text-xs text-stone-600 ml-7 dark:text-stone-400';
+            detailsP.textContent = details;
+            
+            // Always visible source link
+            const sourceLinkDiv = document.createElement('div');
+            sourceLinkDiv.className = 'text-xs mt-2';
+            sourceLinkDiv.innerHTML = `<a href="${sourceUrl}" target="_blank" rel="noopener noreferrer" class="text-sky-700 hover:text-sky-900 underline inline-flex items-center dark:text-sky-400 dark:hover:text-sky-200">Download Source: ${sourceFileName} <svg class="download-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.905 3.079V2.75z" /><path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" /></svg></a>`;
+            
+            // Regenerate link and hidden file input
+            const regenerateLabel = document.createElement('label');
+            regenerateLabel.className = 'text-xs text-green-700 hover:underline mt-1 cursor-pointer inline-block dark:text-green-400 dark:hover:text-green-200';
+            regenerateLabel.textContent = 'Regenerate .js File...';
+
+            const regenerateInput = document.createElement('input');
+            regenerateInput.type = 'file';
+            regenerateInput.accept = '.txt';
+            regenerateInput.className = 'hidden';
+            regenerateInput.addEventListener('change', (event) => {
+                handleRegenerateFile(event, contentVarSetter, generationFunction);
+            });
+            
+            regenerateLabel.appendChild(regenerateInput);
+
+            element.appendChild(statusDiv);
+            element.appendChild(detailsP);
+            element.appendChild(sourceLinkDiv);
+            element.appendChild(regenerateLabel);
+        }
+		
+		function handleRegenerateFile(event, contentVarSetter, generationFunction) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                contentVarSetter(e.target.result);
+                generationFunction();
+                // Reset the input value to allow re-selecting the same file again
+                event.target.value = null; 
+            };
+            reader.readAsText(file);
+        }
+        
+        window.onload = function() {
+            setTimeout(() => {
+                let successfulLoads = 0;
+                document.getElementById('dataStatusFooter').classList.remove('hidden');
+
+                // 1. Check for Blocks.js
+                if (typeof EXTERNAL_UNICODE_BLOCKS_DATA !== 'undefined') {
+                    const newBlocks = parseBlocksTxt(EXTERNAL_UNICODE_BLOCKS_DATA);
+                    if (newBlocks.length > 0) {
+                        unicodeBlocks = newBlocks;
+                        successfulLoads++;
+                        renderStatus(document.getElementById('blocksStatus'), true, 'Block Data', `${newBlocks.length} definitions loaded`, 'https://www.unicode.org/Public/UNIDATA/Blocks.txt', 'Blocks.txt', (content) => selectedBlocksFileContent = content, generateAndDownloadBlocksJs);
+                    } else {
+                        renderStatus(document.getElementById('blocksStatus'), false, 'Block Data', 'File found but empty', 'https://www.unicode.org/Public/UNIDATA/Blocks.txt', 'Blocks.txt', (content) => selectedBlocksFileContent = content, generateAndDownloadBlocksJs);
+                        blocksSetupSectionElement.classList.remove('hidden');
+                    }
+                } else {
+                    renderStatus(document.getElementById('blocksStatus'), false, 'Block Data', 'Not loaded, using defaults', 'https://www.unicode.org/Public/UNIDATA/Blocks.txt', 'Blocks.txt', (content) => selectedBlocksFileContent = content, generateAndDownloadBlocksJs);
+                    blocksSetupSectionElement.classList.remove('hidden');
+                }
+
+                // 2. Check for UnicodeData.js
+                if (typeof EXTERNAL_UNICODE_CHARACTER_NAMES !== 'undefined' && typeof EXTERNAL_UNICODE_ALGORITHMIC_RANGES !== 'undefined') {
+                    unicodeCharacterNames = EXTERNAL_UNICODE_CHARACTER_NAMES;
+                    unicodeAlgorithmicNameRangesArray = EXTERNAL_UNICODE_ALGORITHMIC_RANGES;
+                    const nameCount = Object.keys(unicodeCharacterNames).length + unicodeAlgorithmicNameRangesArray.reduce((sum, range) => sum + (range.end - range.start + 1), 0);
+                    successfulLoads++;
+                    renderStatus(document.getElementById('unicodeDataStatus'), true, 'Character Data', `~${nameCount.toLocaleString()} names loaded`, 'https://www.unicode.org/Public/UNIDATA/UnicodeData.txt', 'UnicodeData.txt', (content) => selectedUnicodeDataFileContent = content, generateAndDownloadUnicodeDataJs);
+                } else {
+                    renderStatus(document.getElementById('unicodeDataStatus'), false, 'Character Data', 'Not loaded', 'https://www.unicode.org/Public/UNIDATA/UnicodeData.txt', 'UnicodeData.txt', (content) => selectedUnicodeDataFileContent = content, generateAndDownloadUnicodeDataJs);
+                    unicodeDataSetupSectionElement.classList.remove('hidden');
+                }
+
+                // 3. Check for ChartLinks.js
+                if (typeof EXTERNAL_UNICODE_CHART_LINKS !== 'undefined') {
+                    unicodeChartLinks = EXTERNAL_UNICODE_CHART_LINKS;
+                    successfulLoads++;
+                    renderStatus(document.getElementById('chartLinksStatus'), true, 'Chart Links', `${Object.keys(unicodeChartLinks).length} links loaded`, 'https://www.unicode.org/charts/PDF/unversionedchartlist.txt', 'unversionedchartlist.txt', (content) => selectedChartLinksFileContent = content, generateAndDownloadChartLinksJs);
+                } else {
+                    renderStatus(document.getElementById('chartLinksStatus'), false, 'Chart Links', 'Not loaded', 'https://www.unicode.org/charts/PDF/unversionedchartlist.txt', 'unversionedchartlist.txt', (content) => selectedChartLinksFileContent = content, generateAndDownloadChartLinksJs);
+                    chartLinksSetupSectionElement.classList.remove('hidden');
+                }
+                
+                // 4. Check for EmojiData.js
+                if (typeof EXTERNAL_EMOJI_SEQUENCES !== 'undefined') {
+                    emojiSequenceData = EXTERNAL_EMOJI_SEQUENCES;
+                    successfulLoads++;
+                     renderStatus(document.getElementById('emojiDataStatus'), true, 'Emoji Data', `${Object.keys(emojiSequenceData).length} sequences loaded`, 'https://unicode.org/emoji/charts/emoji-ordering.txt', 'emoji-ordering.txt', (content) => selectedEmojiDataFileContent = content, generateAndDownloadEmojiDataJs);
+                } else {
+                     renderStatus(document.getElementById('emojiDataStatus'), false, 'Emoji Data', 'Not loaded', 'https://unicode.org/emoji/charts/emoji-ordering.txt', 'emoji-ordering.txt', (content) => selectedEmojiDataFileContent = content, generateAndDownloadEmojiDataJs);
+                    emojiDataSetupSectionElement.classList.remove('hidden');
+                }
+
+                if(successfulLoads < 4) {
+					setupContainerElement.classList.remove('hidden');
+				}
+
+            }, 100);
+        };
+
+        function handleLookupByCodepoint() {
+            const rawInput = codepointInputElement.value.trim().replace(/\s+/g, ''); 
+            if (!rawInput) {
+                showLookupMessage("Please enter a codepoint.", true);
+                return;
+            }
+            const normalizedInput = rawInput.toUpperCase().startsWith('U+') ? rawInput.substring(2) : rawInput;
+            
+            if (!/^[0-9A-F]{4,6}$/.test(normalizedInput)) {
+                showLookupMessage("Invalid codepoint format. Use 4-6 hex digits (e.g., 0041 or U+1F600).", true);
+                return;
+            }
+
+            const codepointInt = parseInt(normalizedInput, 16);
+            if (isNaN(codepointInt) || codepointInt > 0x10FFFF) {
+                 showLookupMessage("Invalid codepoint value.", true);
+                 return;
+            }
+            
+            try {
+                const char = String.fromCodePoint(codepointInt);
+                textInputElement.value = char; 
+                analyzeText(char); 
+                showLookupMessage(`Displaying character for U+${normalizedInput}.`, false);
+            } catch (e) {
+                showLookupMessage(`Error converting codepoint U+${normalizedInput} to character.`, true);
+                console.error(e);
+            }
+        }
+
+        function handleLookupByName() {
+            const nameQuery = nameInputElement.value.trim().toLowerCase();
+            if (!nameQuery) {
+                showLookupMessage("Please enter a name to search.", true);
+                return;
+            }
+
+            if (Object.keys(unicodeCharacterNames).length === 0 && unicodeAlgorithmicNameRangesArray.length === 0 && Object.keys(emojiSequenceData).length === 0) {
+                showLookupMessage("Unicode name data (characters or emoji) is not loaded. Please generate relevant .js files first.", true);
+                return;
+            }
+
+            let foundChars = "";
+            const MAX_NAME_LOOKUP_RESULTS = 50; 
+            let resultsCount = 0;
+
+            // Search in explicit character names
+            for (const cpHex in unicodeCharacterNames) {
+                if (resultsCount >= MAX_NAME_LOOKUP_RESULTS) break;
+                if (unicodeCharacterNames[cpHex].toLowerCase().includes(nameQuery)) {
+                    foundChars += String.fromCodePoint(parseInt(cpHex, 16));
+                    resultsCount++;
+                }
+            }
+            // Search in emoji sequence names
+            for (const seqKey in emojiSequenceData) {
+                if (resultsCount >= MAX_NAME_LOOKUP_RESULTS) break;
+                if (emojiSequenceData[seqKey].name.toLowerCase().includes(nameQuery)) {
+                    // Reconstruct emoji from sequence key for display
+                    const emojiFromSeq = seqKey.split(' ').map(cp => String.fromCodePoint(parseInt(cp, 16))).join('');
+                    foundChars += emojiFromSeq;
+                    resultsCount++;
+                }
+            }
+            
+            if (foundChars) {
+                textInputElement.value = foundChars; 
+                analyzeText(foundChars);
+                showLookupMessage(`Found ${resultsCount} character(s)/sequence(s) matching "${nameInputElement.value.trim()}". Displaying details.`, false);
+            } else {
+                resultsBodyElement.innerHTML = '';
+                resultsTableElement.classList.add('hidden');
+                blocksSummaryBodyElement.innerHTML = '';
+                blocksSummarySectionElement.classList.add('hidden');
+                emojiSequenceBodyElement.innerHTML = '';
+                emojiSequenceSectionElement.classList.add('hidden');
+                showLookupMessage(`No characters or sequences found with a name containing "${nameInputElement.value.trim()}".`, false);
+            }
+        }
+
+
+        function analyzeText(inputTextValue) { 
+            resultsBodyElement.innerHTML = ''; 
+            blocksSummaryBodyElement.innerHTML = ''; 
+            emojiSequenceBodyElement.innerHTML = '';
+            if (!inputTextValue) { 
+                messageAreaElement.textContent = 'Input text is empty.';
+                messageAreaElement.classList.remove('hidden');
+                resultsTableElement.classList.add('hidden');
+                individualCharacterDetailsSectionElement.classList.add('hidden');
+                blocksSummarySectionElement.classList.add('hidden');
+                emojiSequenceSectionElement.classList.add('hidden');
+                lookupMessageAreaElement.classList.add('hidden'); 
+                return;
+            }
+            messageAreaElement.classList.add('hidden');
+            resultsTableElement.classList.remove('hidden');
+            individualCharacterDetailsSectionElement.classList.remove('hidden');
+            
+            const uniqueChars = new Set(Array.from(inputTextValue, char => char)); 
+            if (uniqueChars.size === 0) {
+                messageAreaElement.textContent = 'No processable characters found.';
+                messageAreaElement.classList.remove('hidden');
+                resultsTableElement.classList.add('hidden');
+                individualCharacterDetailsSectionElement.classList.add('hidden');
+                blocksSummarySectionElement.classList.add('hidden');
+                emojiSequenceSectionElement.classList.add('hidden');
+                return;
+            }
+
+            const foundBlocksInText = new Map(); 
+
+            if (uniqueChars.size > 200 && inputTextValue === textInputElement.value) { 
+                showLookupMessage(`Found ${uniqueChars.size} unique characters. Displaying the first 200.`, false);
+            } else if (inputTextValue !== textInputElement.value) { 
+                 lookupMessageAreaElement.classList.remove('hidden'); 
+            }
+
+            let count = 0;
+            uniqueChars.forEach(char => {
+                if (count++ >= 200 && inputTextValue === textInputElement.value) return; 
+
+                const codepointInt = char.codePointAt(0);
+                const uPlusFormatted = formatCodepoint(codepointInt);
+                const characterName = findCharacterName(codepointInt);
+                const codepointHex = codepointInt.toString(16).toUpperCase().padStart(4, '0');
+                const utf8Hex = getUtf8HexBytes(char);
+                const utf16Hex = getUtf16HexCodeUnits(char);
+                const utf16LEHex = getUtf16LEHexCodeUnits(char);
+                const blockInfo = findBlockInfo(codepointInt); 
+                const blockName = blockInfo ? blockInfo.name : 'N/A';
+
+                if (blockInfo && !foundBlocksInText.has(blockInfo.name)) {
+                    foundBlocksInText.set(blockInfo.name, blockInfo);
+                }
+
+                const row = resultsBodyElement.insertRow();
+                
+                let cellIndex = 0;
+                row.insertCell(cellIndex++).textContent = char;
+                row.cells[0].classList.add('px-4', 'py-3', 'text-lg', 'font-mono', 'table-cell-valign');
+                
+                row.insertCell(cellIndex++).textContent = uPlusFormatted;
+                row.cells[1].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'font-mono', 'table-cell-valign', 'dark:text-stone-300');
+                
+                row.insertCell(cellIndex++).textContent = characterName;
+                row.cells[2].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'table-cell-valign', 'dark:text-stone-300');
+
+                row.insertCell(cellIndex++).textContent = codepointHex;
+                row.cells[3].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'font-mono', 'table-cell-valign', 'dark:text-stone-300');
+                
+                row.insertCell(cellIndex++).textContent = utf8Hex;
+                row.cells[4].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'font-mono', 'table-cell-valign', 'whitespace-nowrap', 'dark:text-stone-300');
+                
+                row.insertCell(cellIndex++).textContent = utf16Hex;
+                row.cells[5].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'font-mono', 'table-cell-valign', 'whitespace-nowrap', 'dark:text-stone-300');
+
+                row.insertCell(cellIndex++).textContent = utf16LEHex;
+                row.cells[6].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'font-mono', 'table-cell-valign', 'whitespace-nowrap', 'dark:text-stone-300');
+                
+                row.insertCell(cellIndex++).textContent = blockName;
+                row.cells[7].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'table-cell-valign', 'dark:text-stone-300');
+            });
+
+            if (foundBlocksInText.size > 0) {
+                blocksSummarySectionElement.classList.remove('hidden');
+                foundBlocksInText.forEach(block => {
+                    const row = blocksSummaryBodyElement.insertRow();
+                    row.insertCell().textContent = block.name;
+                    row.insertCell().textContent = `${block.start.toString(16).toUpperCase().padStart(4, '0')} - ${block.end.toString(16).toUpperCase().padStart(4, '0')}`;
+                    const chartCell = row.insertCell();
+                    const blockStartHexForChart = block.start.toString(16).toUpperCase().padStart(4,'0');
+                    const pdfFileName = unicodeChartLinks[blockStartHexForChart];
+                    if (pdfFileName) {
+                        const link = document.createElement('a');
+                        link.href = `https://www.unicode.org/charts/PDF/${pdfFileName}`;
+                        link.textContent = 'PDF';
+                        link.target = '_blank';
+                        link.rel = 'noopener noreferrer';
+                        link.classList.add('text-sky-600', 'hover:text-sky-800', 'underline', 'dark:text-sky-400', 'dark:hover:text-sky-200');
+                        chartCell.appendChild(link);
+                    } else { chartCell.textContent = 'N/A'; }
+                     row.cells[0].classList.add('px-4', 'py-2', 'text-sm', 'text-stone-700', 'dark:text-stone-300');
+                     row.cells[1].classList.add('px-4', 'py-2', 'text-sm', 'text-stone-700', 'font-mono', 'dark:text-stone-300');
+                     row.cells[2].classList.add('px-4', 'py-2', 'text-sm');
+                });
+            } else {
+                blocksSummarySectionElement.classList.add('hidden');
+            }
+
+            // Analyze and display emoji sequences
+            identifyAndDisplayEmojiSequences(inputTextValue);
+        }
+
+        function identifyAndDisplayEmojiSequences(text) {
+            emojiSequenceBodyElement.innerHTML = ''; // Clear previous
+            if (Object.keys(emojiSequenceData).length === 0) {
+                emojiSequenceSectionElement.classList.add('hidden');
+                return;
+            }
+
+            const foundSequences = [];
+            let i = 0;
+            const textChars = Array.from(text); // Handle astral characters correctly
+
+            while (i < textChars.length) {
+                let longestMatch = null;
+                let longestMatchLength = 0;
+
+                for (let len = Math.min(10, textChars.length - i); len > 0; len--) { 
+                    const subArray = textChars.slice(i, i + len);
+                    const codepointSequenceKey = subArray.map(ch => ch.codePointAt(0).toString(16).toUpperCase()).join(' ');
+                    
+                    if (emojiSequenceData[codepointSequenceKey]) {
+                        longestMatch = {
+                            sequenceString: subArray.join(''),
+                            data: emojiSequenceData[codepointSequenceKey],
+                            codepoints: codepointSequenceKey.split(' ').map(cp => `U+${cp.padStart(4,'0')}`).join(' ')
+                        };
+                        longestMatchLength = len;
+                        break; 
+                    }
+                }
+
+                if (longestMatch) {
+                    foundSequences.push(longestMatch);
+                    i += longestMatchLength; 
+                } else {
+                    i++; 
+                }
+            }
+
+            if (foundSequences.length > 0) {
+                emojiSequenceSectionElement.classList.remove('hidden');
+                foundSequences.forEach(seq => {
+                    const row = emojiSequenceBodyElement.insertRow();
+                    row.insertCell().textContent = seq.sequenceString;
+                    row.insertCell().textContent = seq.data.name;
+                    row.insertCell().textContent = seq.codepoints;
+                    row.cells[0].classList.add('px-4', 'py-3', 'text-xl', 'font-mono'); 
+                    row.cells[1].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'dark:text-stone-300');
+                    row.cells[2].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'font-mono', 'dark:text-stone-300');
+                });
+            } else {
+                emojiSequenceSectionElement.classList.add('hidden');
+            }
+        }
+
+
+        function findBlockInfo(codepoint) { 
+            for (const block of unicodeBlocks) {
+                if (codepoint >= block.start && codepoint <= block.end) { return block; }
+            }
+            return null; 
+        }
+        function findBlockName(codepoint) { 
+            const blockInfo = findBlockInfo(codepoint);
+            return blockInfo ? blockInfo.name : 'N/A';
+        }
+
+        function findCharacterName(codepointInt) {
+            const codepointHex = codepointInt.toString(16).toUpperCase().padStart(4, '0');
+            if (unicodeCharacterNames[codepointHex]) {
+                return unicodeCharacterNames[codepointHex];
+            }
+            for (const range of unicodeAlgorithmicNameRangesArray) {
+                if (codepointInt >= range.start && codepointInt <= range.end) {
+                    if (range.type === 'CJK' || range.type === 'HANGUL') {
+                         return range.namePrefix + codepointHex;
+                    } else { 
+                         return range.namePrefix + codepointHex; 
+                    }
+                }
+            }
+            return 'N/A';
+        }
+
+        function formatCodepoint(codepointInt) {
+            const hexString = codepointInt.toString(16).toUpperCase();
+            if (codepointInt <= 0xFFFF) {
+                return "U+" + hexString.padStart(4, '0');
+            } else if (codepointInt <= 0xFFFFF) {
+                return "U+" + hexString.padStart(5, '0');
+            } else {
+                return "U+" + hexString.padStart(6, '0');
+            }
+        }
+
+        function getUtf8HexBytes(char) {
+            return Array.from(utf8Encoder.encode(char)).map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+        }
+
+        function getUtf16HexCodeUnits(char) { 
+            const codeUnits = [];
+            for (let i = 0; i < char.length; i++) {
+                codeUnits.push(char.charCodeAt(i).toString(16).padStart(4, '0').toUpperCase());
+            }
+            return codeUnits.join(' ');
+        }
+
+        function getUtf16LEHexCodeUnits(char) {
+            const codeUnits = [];
+            for (let i = 0; i < char.length; i++) {
+                const codeUnit = char.charCodeAt(i);
+                const byte1 = (codeUnit & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+                const byte2 = ((codeUnit >> 8) & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+                codeUnits.push(byte1 + byte2);
+            }
+            return codeUnits.join(' ');
+        }
+
+    </script>
+</body>
+</html>
