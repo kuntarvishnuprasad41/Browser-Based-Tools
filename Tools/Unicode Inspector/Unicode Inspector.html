@@ -140,13 +140,14 @@
             <label for="textInput" class="block text-2xl mt-4 mb-4 font-semibold text-stone-700 dark:text-stone-200">Input Text:</label>
             <textarea id="textInput" rows="8" class="w-full p-3 border border-stone-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors dark:bg-stone-700 dark:border-stone-600 dark:text-stone-100 dark:focus:ring-sky-400 dark:focus:border-sky-400" placeholder="Paste text here... e.g., Hello World! 👋 € α 👍"></textarea>
             
-            <div class="flex flex-col sm:flex-row items-center justify-start mt-4 mb-4">
-                <button id="analyzeButton" class="w-full sm:w-auto bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-opacity-50 dark:bg-sky-700 dark:hover:bg-sky-600 dark:focus:ring-sky-400 mb-3 sm:mb-0 sm:mr-6">Analyze Text</button>
-                <div class="flex items-center">
+            <div class="flex flex-col sm:flex-row items-center mt-4 mb-4">
+                <button id="analyzeButton" class="w-full sm:w-auto bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-opacity-50 dark:bg-sky-700 dark:hover:bg-sky-600 dark:focus:ring-sky-400 mb-3 sm:mb-0">Analyze Text</button>
+                <div class="flex items-center sm:ml-6">
                     <input type="checkbox" id="sequentialModeCheckbox" class="mr-2 h-4 w-4 text-sky-600 border-stone-300 rounded focus:ring-sky-500 dark:focus:ring-sky-400 dark:text-sky-700 dark:border-stone-600 dark:bg-stone-700">
                     <label for="sequentialModeCheckbox" class="text-sm font-medium text-stone-700 dark:text-stone-300">Sequential Mode (Include Duplicates)</label>
                 </div>
-            </div>        
+                <button id="clearButton" class="w-full sm:w-auto bg-stone-400 hover:bg-stone-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:ring-opacity-50 dark:bg-stone-600 dark:hover:bg-stone-500 sm:ml-auto">Clear All</button>
+            </div>
         </section>
 
         <section id="emojiSequenceSection" class="mb-8 hidden">
@@ -244,6 +245,7 @@
 
         const textInputElement = document.getElementById('textInput');
         const analyzeButtonElement = document.getElementById('analyzeButton');
+        const clearButtonElement = document.getElementById('clearButton');
         const resultsTableElement = document.getElementById('resultsTable');
         const resultsBodyElement = document.getElementById('resultsBody');
         const messageAreaElement = document.getElementById('messageArea');
@@ -304,6 +306,7 @@
         analyzeButtonElement.addEventListener('click', () => analyzeText(textInputElement.value));
         lookupByCodepointButtonElement.addEventListener('click', handleLookupByCodepoint);
         lookupByNameButtonElement.addEventListener('click', handleLookupByName);
+        clearButtonElement.addEventListener('click', resetUI);
         
         function showLookupMessage(message, isError = false) { showMessageInArea(lookupMessageAreaElement, message, isError); }
         
@@ -314,6 +317,26 @@
             areaElement.classList.toggle('text-green-600', !isError && message.includes('successfully'));
             areaElement.classList.toggle('text-blue-600', !isError && !message.includes('successfully') && !message.includes('Error') && !message.includes('found'));
             areaElement.classList.toggle('text-orange-600', !isError && (message.includes('No character found') || message.includes('No characters found')));
+        }
+
+        function resetUI() {
+            // Clear all text inputs
+            textInputElement.value = '';
+            codepointInputElement.value = '';
+            nameInputElement.value = '';
+
+            // Hide all result tables and sections
+            resultsTableElement.classList.add('hidden');
+            individualCharacterDetailsSectionElement.classList.add('hidden');
+            blocksSummarySectionElement.classList.add('hidden');
+            emojiSequenceSectionElement.classList.add('hidden');
+
+            // Hide any dynamic messages
+            lookupMessageAreaElement.classList.add('hidden');
+            
+            // Restore the default prompt message in the main results area
+            messageAreaElement.textContent = "Paste text above or use lookup options, then click 'Analyze Text Above' to see character details.";
+            messageAreaElement.classList.remove('hidden');
         }
 
         function setupFileUploader(fileInputElement, generateButtonElement, instructionElement, contentVarSetter, successCallback) {
@@ -744,13 +767,8 @@
             // emojiSequenceBodyElement is cleared in identifyAndDisplayEmojiSequences
             
             if (!inputTextValue) { 
-                messageAreaElement.textContent = 'Input text is empty.';
-                messageAreaElement.classList.remove('hidden');
-                resultsTableElement.classList.add('hidden');
-                individualCharacterDetailsSectionElement.classList.add('hidden');
-                blocksSummarySectionElement.classList.add('hidden');
-                emojiSequenceSectionElement.classList.add('hidden');
-                lookupMessageAreaElement.classList.add('hidden'); 
+                resetUI();
+                messageAreaElement.textContent = 'Input text is empty.'; // Override with specific message
                 return;
             }
             messageAreaElement.classList.add('hidden');
