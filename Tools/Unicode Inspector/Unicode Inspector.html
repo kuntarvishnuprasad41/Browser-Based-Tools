@@ -861,17 +861,17 @@
             }
 
             // Analyze and display emoji sequences (this function operates on the original inputTextValue)
-            identifyAndDisplayEmojiSequences(inputTextValue);
+            identifyAndDisplayEmojiSequences(inputTextValue, isSequentialMode);
         }
 
-        function identifyAndDisplayEmojiSequences(text) {
+        function identifyAndDisplayEmojiSequences(text, isSequentialMode) {
             emojiSequenceBodyElement.innerHTML = ''; // Clear previous
             if (Object.keys(emojiSequenceData).length === 0) {
                 emojiSequenceSectionElement.classList.add('hidden');
                 return;
             }
 
-            const foundSequences = [];
+            let foundSequences = [];
             let i = 0;
             const textChars = Array.from(text); 
 
@@ -902,6 +902,12 @@
                 } else {
                     i++; 
                 }
+            }
+            
+            // If not in sequential mode, filter out duplicates based on sequenceString. Do this by creating a Map which requires unique keys so existing ones are overwritten, not added.
+            if (!isSequentialMode) {
+                const uniqueSequenceMap = new Map(foundSequences.map(seq => [seq.sequenceString, seq]));
+                foundSequences = Array.from(uniqueSequenceMap.values());
             }
 
             if (foundSequences.length > 0) {
