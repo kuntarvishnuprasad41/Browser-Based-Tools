@@ -116,7 +116,14 @@
             <div id="lookupMessageArea" class="text-sm text-stone-600 mb-3 p-2 bg-stone-50 rounded-lg border border-stone-200 hidden dark:bg-stone-700 dark:border-stone-600 dark:text-stone-300"></div>
             <label for="textInput" class="block text-2xl mt-4 mb-4 font-semibold text-stone-700 dark:text-stone-200">Input Text:</label>
             <textarea id="textInput" rows="8" class="w-full p-3 border border-stone-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors dark:bg-stone-700 dark:border-stone-600 dark:text-stone-100 dark:focus:ring-sky-400 dark:focus:border-sky-400" placeholder="Paste text here... e.g., Hello World! 👋 € α 👍"></textarea>
-            <button id="analyzeButton" class="block w-full mt-4 mb-4 sm:w-auto bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-opacity-50 dark:bg-sky-700 dark:hover:bg-sky-600 dark:focus:ring-sky-400">Analyze Text</button>
+            
+            <div class="flex flex-col sm:flex-row items-center justify-start mt-4 mb-4">
+                <button id="analyzeButton" class="w-full sm:w-auto bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-opacity-50 dark:bg-sky-700 dark:hover:bg-sky-600 dark:focus:ring-sky-400 mb-3 sm:mb-0 sm:mr-6">Analyze Text</button>
+                <div class="flex items-center">
+                    <input type="checkbox" id="sequentialModeCheckbox" class="mr-2 h-4 w-4 text-sky-600 border-stone-300 rounded focus:ring-sky-500 dark:focus:ring-sky-400 dark:text-sky-700 dark:border-stone-600 dark:bg-stone-700">
+                    <label for="sequentialModeCheckbox" class="text-sm font-medium text-stone-700 dark:text-stone-300">Sequential Mode (Include Duplicates)</label>
+                </div>
+            </div>        
         </section>
 
         <section id="emojiSequenceSection" class="mb-8 hidden">
@@ -224,6 +231,7 @@
         const emojiSequenceSectionElement = document.getElementById('emojiSequenceSection');
         const emojiSequenceBodyElement = document.getElementById('emojiSequenceBody');
 		const individualCharacterDetailsSectionElement = document.getElementById('individualCharacterDetailsSection');
+        const sequentialModeCheckboxElement = document.getElementById('sequentialModeCheckbox');
         
         const setupContainerElement = document.getElementById('setupContainer');
 
@@ -711,7 +719,8 @@
         function analyzeText(inputTextValue) { 
             resultsBodyElement.innerHTML = ''; 
             blocksSummaryBodyElement.innerHTML = ''; 
-            emojiSequenceBodyElement.innerHTML = '';
+            // emojiSequenceBodyElement is cleared in identifyAndDisplayEmojiSequences
+            
             if (!inputTextValue) { 
                 messageAreaElement.textContent = 'Input text is empty.';
                 messageAreaElement.classList.remove('hidden');
@@ -726,8 +735,16 @@
             resultsTableElement.classList.remove('hidden');
             individualCharacterDetailsSectionElement.classList.remove('hidden');
             
-            const uniqueChars = new Set(Array.from(inputTextValue, char => char)); 
-            if (uniqueChars.size === 0) {
+            const isSequentialMode = sequentialModeCheckboxElement.checked;
+            let charactersToAnalyze;
+
+            if (isSequentialMode) {
+                charactersToAnalyze = Array.from(inputTextValue); // All characters in order
+            } else {
+                charactersToAnalyze = Array.from(new Set(Array.from(inputTextValue, char => char))); // Unique characters
+            }
+            
+            if (charactersToAnalyze.length === 0) {
                 messageAreaElement.textContent = 'No processable characters found.';
                 messageAreaElement.classList.remove('hidden');
                 resultsTableElement.classList.add('hidden');
@@ -739,14 +756,18 @@
 
             const foundBlocksInText = new Map(); 
 
-            if (uniqueChars.size > 200 && inputTextValue === textInputElement.value) { 
-                showLookupMessage(`Found ${uniqueChars.size} unique characters. Displaying the first 200.`, false);
+            const charCountForMessage = charactersToAnalyze.length;
+            const charTypeMessage = isSequentialMode ? "characters" : "unique characters";
+
+            if (charCountForMessage > 200 && inputTextValue === textInputElement.value) { 
+                showLookupMessage(`Found ${charCountForMessage} ${charTypeMessage}. Displaying the first 200.`, false);
             } else if (inputTextValue !== textInputElement.value) { 
                  lookupMessageAreaElement.classList.remove('hidden'); 
             }
 
+
             let count = 0;
-            uniqueChars.forEach(char => {
+            charactersToAnalyze.forEach(char => {
                 if (count++ >= 200 && inputTextValue === textInputElement.value) return; 
 
                 const codepointInt = char.codePointAt(0);
@@ -817,7 +838,7 @@
                 blocksSummarySectionElement.classList.add('hidden');
             }
 
-            // Analyze and display emoji sequences
+            // Analyze and display emoji sequences (this function operates on the original inputTextValue)
             identifyAndDisplayEmojiSequences(inputTextValue);
         }
 
