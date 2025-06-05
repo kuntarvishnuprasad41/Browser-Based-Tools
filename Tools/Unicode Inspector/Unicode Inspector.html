@@ -29,8 +29,31 @@
             margin-left: 0.25em;
             vertical-align: middle;
         }
+        .expandable-icon {
+            cursor: pointer;
+            display: inline-block;
+            margin-right: 8px;
+            transition: transform 0.2s ease-in-out;
+            font-size: 0.8em; /* Make icon a bit smaller */
+        }
+        .expanded .expandable-icon {
+            transform: rotate(90deg);
+        }
+        .sub-table-container {
+            padding: 0; /* Remove padding if td has it */
+        }
+        .sub-table-container table {
+            width: 100%;
+            background-color: rgba(0,0,0,0.02); /* Slight background tint for sub-table */
+        }
+        .dark .sub-table-container table {
+            background-color: rgba(255,255,255,0.03); /* Dark mode tint */
+        }
+        .sub-table-container th, .sub-table-container td {
+            font-size: 0.9em; /* Slightly smaller font for sub-table */
+        }
     </style>
-    </head>
+</head>
 <body class="bg-stone-100 text-stone-800 min-h-screen flex flex-col items-center py-8 px-4 dark:bg-stone-900 dark:text-stone-200">
 
     <div class="w-full max-w-7xl bg-white p-6 sm:p-8 rounded-xl shadow-lg dark:bg-stone-800 dark:shadow-none">
@@ -715,7 +738,6 @@
             }
         }
 
-
         function analyzeText(inputTextValue) { 
             resultsBodyElement.innerHTML = ''; 
             blocksSummaryBodyElement.innerHTML = ''; 
@@ -851,7 +873,7 @@
 
             const foundSequences = [];
             let i = 0;
-            const textChars = Array.from(text); // Handle astral characters correctly
+            const textChars = Array.from(text); 
 
             while (i < textChars.length) {
                 let longestMatch = null;
@@ -859,13 +881,15 @@
 
                 for (let len = Math.min(10, textChars.length - i); len > 0; len--) { 
                     const subArray = textChars.slice(i, i + len);
-                    const codepointSequenceKey = subArray.map(ch => ch.codePointAt(0).toString(16).toUpperCase()).join(' ');
+                    const codepointHexArray = subArray.map(ch => ch.codePointAt(0).toString(16).toUpperCase());
+                    const codepointSequenceKey = codepointHexArray.join(' ');
                     
                     if (emojiSequenceData[codepointSequenceKey]) {
                         longestMatch = {
                             sequenceString: subArray.join(''),
                             data: emojiSequenceData[codepointSequenceKey],
-                            codepoints: codepointSequenceKey.split(' ').map(cp => `U+${cp.padStart(4,'0')}`).join(' ')
+                            codepointsUPlus: codepointHexArray.map(cp => `U+${cp.padStart(4,'0')}`).join(' '),
+                            individualCodepointsHex: codepointHexArray // Store individual hex codepoints
                         };
                         longestMatchLength = len;
                         break; 
@@ -884,18 +908,142 @@
                 emojiSequenceSectionElement.classList.remove('hidden');
                 foundSequences.forEach(seq => {
                     const row = emojiSequenceBodyElement.insertRow();
-                    row.insertCell().textContent = seq.sequenceString;
+
+                    const sequenceCell = row.insertCell();
+                    sequenceCell.classList.add('px-4', 'py-3', 'text-xl', 'font-mono', 'flex', 'items-center'); // Use flex for alignment
+
+                    // Icon container - always present for alignment
+                    const iconContainer = document.createElement('span');
+                    iconContainer.style.display = 'inline-block';
+                    iconContainer.style.width = '16px'; // Reserve space for icon (adjust as needed)
+                    iconContainer.style.height = '16px'; // Reserve space for icon
+                    iconContainer.style.marginRight = '8px'; // Space between icon and emoji text
+                    iconContainer.style.flexShrink = '0'; // Prevent shrinking if emoji is long
+
+                    if (seq.individualCodepointsHex.length > 1) {
+                        row.classList.add('cursor-pointer'); // Make row look clickable only if expandable
+                        // Create SVG triangle
+                        const svgIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                        svgIcon.setAttribute('viewBox', '0 0 10 10');
+                        svgIcon.setAttribute('class', 'expander-svg-icon'); // For CSS rotation and potential styling
+                        svgIcon.style.width = '10px';
+                        svgIcon.style.height = '10px';
+                        svgIcon.style.fill = '#888888'; // Medium gray
+                        // Override for dark mode if needed (could also use CSS for this)
+                        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                            svgIcon.style.fill = '#bbbbbb'; // Lighter gray for dark mode
+                        }
+                        
+                        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                        polygon.setAttribute('points', '2,1 8,5 2,9'); // Triangle points
+                        
+                        svgIcon.appendChild(polygon);
+                        iconContainer.appendChild(svgIcon);
+                        // Add to `row` so `expanded` class applies for rotation
+                        row.appendChild(iconContainer); // Add to row, not cell, if class is on row.
+                    }
+                    
+                    sequenceCell.appendChild(iconContainer); // Add icon container to cell
+                    sequenceCell.appendChild(document.createTextNode(seq.sequenceString));
+                    
                     row.insertCell().textContent = seq.data.name;
-                    row.insertCell().textContent = seq.codepoints;
-                    row.cells[0].classList.add('px-4', 'py-3', 'text-xl', 'font-mono'); 
-                    row.cells[1].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'dark:text-stone-300');
-                    row.cells[2].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'font-mono', 'dark:text-stone-300');
+                    row.cells[1].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'dark:text-stone-300', 'table-cell-valign');
+                    row.insertCell().textContent = seq.codepointsUPlus;
+                    row.cells[2].classList.add('px-4', 'py-3', 'text-sm', 'text-stone-700', 'font-mono', 'dark:text-stone-300', 'table-cell-valign');
+
+                    if (seq.individualCodepointsHex.length > 1) {
+                        row.addEventListener('click', () => toggleEmojiComponentDetails(row, seq.individualCodepointsHex));
+                    }
                 });
             } else {
                 emojiSequenceSectionElement.classList.add('hidden');
             }
         }
 
+        function toggleEmojiComponentDetails(clickedRow, codepointHexArray) {
+            clickedRow.classList.toggle('expanded');
+            
+            const svgIconElement = clickedRow.querySelector('.expander-svg-icon');
+            if (svgIconElement) {
+                 svgIconElement.style.transform = clickedRow.classList.contains('expanded') ? 'rotate(90deg)' : 'rotate(0deg)';
+            }
+
+
+            const potentialSubRow = clickedRow.nextElementSibling;
+            const isExistingAndCorrectSubRow = potentialSubRow && potentialSubRow.classList.contains('emoji-details-sub-row');
+
+            if (!clickedRow.classList.contains('expanded')) { // If we just removed 'expanded', it means we are collapsing
+                if (isExistingAndCorrectSubRow) {
+                    potentialSubRow.style.display = 'none'; 
+                }
+            } else { // We are expanding
+                if (isExistingAndCorrectSubRow) {
+                    potentialSubRow.style.display = ''; 
+                } else {
+                    const detailsRow = emojiSequenceBodyElement.insertRow(clickedRow.rowIndex); 
+                    detailsRow.classList.add('emoji-details-sub-row');
+                    const detailsCell = detailsRow.insertCell();
+                    detailsCell.colSpan = clickedRow.cells.length; 
+                    detailsCell.classList.add('sub-table-container', 'p-0', 'bg-sky-50', 'dark:bg-sky-950');
+
+                    const subTable = document.createElement('table');
+                    subTable.classList.add('min-w-full', 'divide-y', 'divide-stone-300', 'dark:divide-stone-600');
+                    
+                    const subThead = subTable.createTHead();
+                    subThead.classList.add('bg-stone-50', 'dark:bg-stone-700'); 
+                    const subHeaderRow = subThead.insertRow();
+                    const headers = ["Char", "Codepoint (U+)", "Name", "UTF-8", "UTF-16", "UTF-16 LE"];
+                    
+                    headers.forEach((headerText, index) => {
+                        const th = document.createElement('th');
+                        th.scope = 'col';
+                        th.classList.add('px-3', 'py-2', 'text-left', 'text-xs', 'font-medium', 'text-stone-500', 'uppercase', 'tracking-wider', 'dark:text-stone-400');
+                        // Apply padding-left only to the first header cell
+                        if (index === 0) {
+                            th.classList.add('pl-10'); // w-8 in Tailwind = 2rem padding
+                        }
+                        th.textContent = headerText;
+                        subHeaderRow.appendChild(th);
+                    });
+
+                    const subTbody = subTable.createTBody();
+                    subTbody.classList.add('bg-sky-50', 'divide-y', 'divide-stone-200', 'dark:bg-sky-950', 'dark:divide-stone-700');
+
+                    codepointHexArray.forEach(cpHex => {
+                        const codepointInt = parseInt(cpHex, 16);
+                        const char = String.fromCodePoint(codepointInt);
+                        
+                        const subRow = subTbody.insertRow();
+                        let cellIdx = 0; 
+
+                        subRow.insertCell(cellIdx++).textContent = char;
+                        // Apply base padding and extra left padding to the first body cell
+                        subRow.cells[0].classList.add('px-3', 'py-2', 'pl-10', 'text-base', 'font-mono', 'table-cell-valign');
+
+                        subRow.insertCell(cellIdx++).textContent = formatCodepoint(codepointInt);
+                        subRow.cells[1].classList.add('px-3', 'py-2', 'text-xs', 'font-mono', 'table-cell-valign');
+                        
+                        subRow.insertCell(cellIdx++).textContent = findCharacterName(codepointInt);
+                        subRow.cells[2].classList.add('px-3', 'py-2', 'text-xs', 'table-cell-valign');
+                        
+                        subRow.insertCell(cellIdx++).textContent = getUtf8HexBytes(char);
+                        subRow.cells[3].classList.add('px-3', 'py-2', 'text-xs', 'font-mono', 'whitespace-nowrap', 'table-cell-valign');
+                        
+                        subRow.insertCell(cellIdx++).textContent = getUtf16HexCodeUnits(char);
+                        subRow.cells[4].classList.add('px-3', 'py-2', 'text-xs', 'font-mono', 'whitespace-nowrap', 'table-cell-valign');
+
+                        subRow.insertCell(cellIdx++).textContent = getUtf16LEHexCodeUnits(char);
+                        subRow.cells[5].classList.add('px-3', 'py-2', 'text-xs', 'font-mono', 'whitespace-nowrap', 'table-cell-valign');
+                        
+                        // Style all cells' text color
+                        for(let k=0; k < cellIdx; k++) { 
+                            subRow.cells[k].classList.add('text-stone-700', 'dark:text-stone-300');
+                        }
+                    });
+                    detailsCell.appendChild(subTable);
+                }
+            }
+        }
 
         function findBlockInfo(codepoint) { 
             for (const block of unicodeBlocks) {
