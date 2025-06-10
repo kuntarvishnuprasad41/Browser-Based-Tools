@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Repo Explorer</title>
+    <style>
+        :root {
+            --primary-color: #0366d6;
+            --border-color: #e1e4e8;
+            --background-light: #f6f8fa;
+            --text-color: #24292e;
+            --text-muted: #586069;
+            --red: #d73a49;
+            --green: #28a745;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            max-width: 95%;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1, h2 { text-align: center; }
+        input[type="text"], input[type="password"] {
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 14px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        button {
+            padding: 8px 14px;
+            border: 1px solid rgba(27, 31, 35, 0.15);
+            background-color: #f6f8fa;
+            color: var(--text-color);
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover { background-color: #f3f4f6; }
+        button:disabled { background-color: #f6f8fa; cursor: not-allowed; opacity: 0.6; }
+        button.primary { background-color: var(--green); color: white; border-color: var(--green); font-weight: 600; }
+        button.primary:hover { background-color: #269f42; }
+
+        .tabs { display: flex; border-bottom: 1px solid var(--border-color); margin-bottom: 20px; }
+        .tab-button { background: none; border: none; border-bottom: 3px solid transparent; padding: 10px 15px; font-size: 16px; border-radius: 0; }
+        .tab-button.active { border-bottom-color: var(--primary-color); font-weight: bold; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        .section { background-color: var(--background-light); border: 1px solid var(--border-color); border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+        #fetcher .section { max-width: 800px; margin-left: auto; margin-right: auto; }
+        .section-title { margin-top: 0; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
+        .controls-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+        #status, #full-fetch-status { margin-top: 15px; font-weight: bold; }
+        .error { color: var(--red); }
+        .success { color: var(--green); }
+        
+        /* Viewer Layout */
+        .viewer-layout { display: flex; gap: 20px; align-items: flex-start; }
+        .entity-list-container { flex: 0 0 250px; }
+        .viewer-main-content {
+            flex-grow: 1;
+            min-width: 0; /* Important: allows the flex item to shrink below its content size */
+        }
+        #entityList .entity-item { display: block; width: 100%; padding: 10px; border: 1px solid transparent; border-radius: 6px; text-align: left; background: none; margin-bottom: 5px; }
+        #entityList .entity-item.active { background-color: var(--primary-color); color: white; font-weight: bold; }
+        #entityList .entity-item:not(.active):hover { background-color: #f3f4f6; }
+
+        /* Table Styles - FIXED FOR PROPER RESIZING */
+        .table-container { 
+            overflow-x: auto; 
+            border: 1px solid var(--border-color); 
+            border-radius: 6px;
+            position: relative;
+        }
+        table {
+            border-collapse: collapse;
+            table-layout: fixed; /* This is crucial for consistent column widths */
+            width: auto; /* Allow table to grow beyond container */
+            min-width: 100%; /* But at least fill the container */
+        }
+        th, td { 
+            padding: 12px 15px; 
+            text-align: left; 
+            border-bottom: 1px solid var(--border-color); 
+            white-space: nowrap; 
+            overflow: hidden; 
+            text-overflow: ellipsis;
+            box-sizing: border-box; /* Include padding in width calculations */
+        }
+        thead tr:last-child th { border-bottom: none; }
+        tr:last-child td { border-bottom: none; }
+        th { 
+            background-color: var(--background-light); 
+            user-select: none; 
+            position: relative;
+            min-width: 50px; /* Minimum column width */
+        }
+        th.sortable-header { cursor: pointer; }
+        th.sortable-header:hover { background-color: #eef1f4; }
+        th .sort-indicator { 
+            display: inline-block;
+            width: 1em;
+            color: var(--text-muted);
+            margin-right: 6px;
+        }
+        tr:hover { background-color: #f6f8fa; }
+        td a { color: var(--primary-color); text-decoration: none; }
+        td a:hover { text-decoration: underline; }
+
+        /* Resizable Columns */
+        .resize-handle { 
+            position: absolute; 
+            top: 0; 
+            right: -3px; 
+            width: 6px; 
+            height: 100%; 
+            cursor: col-resize; 
+            z-index: 10;
+            background: transparent; /* Make it easier to grab */
+        }
+        .resize-handle:hover {
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        /* Filter Styles */
+        .filter-row th { padding: 8px; }
+        .language-filter-cell { position: relative; overflow: visible; }
+        .language-filter { position: relative; }
+        .language-filter-button { width: 100%; text-align: left; background-color: white; padding: 8px 12px; font-size: 14px; font-weight: normal; }
+        
+        .language-filter-dropdown {
+            display: none;
+            position: fixed;
+            background-color: white;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            max-height: 250px;
+            overflow-y: auto;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .language-filter-dropdown div { padding: 8px 12px; }
+        .language-filter-dropdown label { display: block; width: 100%; font-weight: normal;}
+
+        .api-key-container { display: flex; align-items: center; gap: 10px; flex-grow: 1; }
+        .api-key-container a { white-space: nowrap; }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --primary-color: #2f81f7;
+                --border-color: #30363d;
+                --background-light: #161b22;
+                --text-color: #c9d1d9;
+                --text-muted: #8b949e;
+                --green: #238636;
+            }
+            body {
+                background-color: #0d1117;
+            }
+            input[type="text"], input[type="password"] {
+                background-color: #010409;
+                border-color: var(--border-color);
+                color: var(--text-color);
+            }
+            button {
+                background-color: #21262d;
+                color: var(--text-color);
+                border-color: rgba(240, 246, 252, 0.1);
+            }
+            button:hover {
+                background-color: #30363d;
+                border-color: #8b949e;
+            }
+            button:disabled {
+                background-color: #21262d;
+                opacity: 0.5;
+            }
+            button.primary {
+                background-color: var(--green);
+                color: white;
+                border-color: var(--green);
+            }
+            button.primary:hover {
+                background-color: #2ea043;
+            }
+            th.sortable-header:hover { background-color: #1f242c; }
+            #entityList .entity-item:not(.active):hover { background-color: #161b22; }
+            tr:hover { background-color: #161b22; }
+            .resize-handle:hover { background: rgba(255, 255, 255, 0.1); }
+            
+            .language-filter-button {
+                background-color: #0d1117;
+            }
+            .language-filter-dropdown {
+                background-color: #161b22;
+                border-color: var(--border-color);
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>GitHub Repo Explorer</h1>
+
+    <div class="tabs">
+        <button class="tab-button active" onclick="App.changeTab('viewer')">Cached Repositories</button>
+        <button class="tab-button" onclick="App.changeTab('fetcher')">Full Fetch Tool</button>
+    </div>
+
+    <div id="viewer" class="tab-content active">
+        <div class="viewer-layout">
+            <div class="entity-list-container">
+                 <div class="section" style="padding: 15px;">
+                     <div class="controls-grid" style="gap: 5px;">
+                         <button onclick="App.updateAll()" title="Check all cached users for updated repositories.">Update All</button>
+                         <button onclick="document.getElementById('importInput').click()" title="Import a cache file.">Import Cache</button>
+                         <input type="file" id="importInput" accept=".json" style="display: none;" onchange="App.importData(event)">
+                    </div>
+                </div>
+                <div class="section">
+                    <h2 class="section-title">Cached Users</h2>
+                    <div id="entityList"></div>
+                </div>
+            </div>
+            <div class="viewer-main-content">
+                <div id="results-container" style="display:none;">
+                    <div class="section">
+                        <div class="controls-grid">
+                            <span>Actions for <strong id="currentEntityName"></strong>:</span>
+                            <button id="updateButton" onclick="App.update()" title="Fetch recent changes and new repositories.">Update</button>
+                            <button onclick="App.exportData()" title="Export cache to a JSON file.">Export</button>
+                            <button id="deleteButton" onclick="App.deleteData()" title="Delete cache for selected user.">Delete</button>
+                        </div>
+                        <div id="status"></div>
+                    </div>
+                    <div class="table-container">
+                        <table id="repoTable">
+                            <thead>
+                                <tr>
+                                    <th class="sortable-header" onclick="App.setSort('name')" style="width: 250px;"><span class="sort-indicator"></span>Name</th>
+                                    <th class="sortable-header" onclick="App.setSort('stargazers_count')" style="width: 100px;"><span class="sort-indicator"></span>Stars</th>
+                                    <th class="sortable-header" onclick="App.setSort('language')" style="width: 150px;"><span class="sort-indicator"></span>Language</th>
+                                    <th class="sortable-header" onclick="App.setSort('created_at')" style="width: 120px;"><span class="sort-indicator"></span>Created</th>
+                                    <th class="sortable-header" onclick="App.setSort('updated_at')" style="width: 120px;"><span class="sort-indicator"></span>Updated</th>
+                                    <th class="sortable-header" onclick="App.setSort('pushed_at')" style="width: 120px;"><span class="sort-indicator"></span>Pushed</th>
+                                    <th class="sortable-header" onclick="App.setSort('description')" style="width: 400px;"><span class="sort-indicator"></span>Description</th>
+                                </tr>
+                                <tr class="filter-row">
+                                    <th><input type="text" id="nameFilter" onkeyup="App.applyFilters()" placeholder="Filter..."></th>
+                                    <th></th>
+                                    <th class="language-filter-cell">
+                                        <div class="language-filter">
+                                            <button id="languageFilterButton" class="language-filter-button" onclick="App.toggleLanguageFilter()">All Languages</button>
+                                        </div>
+                                    </th>
+                                    <th></th> <th></th> <th></th> <th><input type="text" id="descriptionFilter" onkeyup="App.applyFilters()" placeholder="Filter..."></th>
+                                </tr>
+                            </thead>
+                            <tbody id="repoTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                 <div id="viewer-prompt" class="section" style="text-align: center;">
+                    <p>Select a cached user from the list on the left to view their repositories.</p>
+                    <p>If the list is empty, use the 'Full Fetch Tool' tab to get started.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="fetcher" class="tab-content">
+        <div class="section">
+            <p>Fetch all public repositories for a GitHub user or organization. This data will be cached in your browser.</p>
+            <div class="controls-grid">
+                 <input type="text" id="repoUrl" placeholder="Enter GitHub User/Org Name (e.g., 'microsoft')">
+                 <div class="api-key-container">
+                    <input type="password" id="apiKey" placeholder="Optional: GitHub API Key (PAT)">
+                    <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Get token</a>
+                 </div>
+                 <button id="fetchButton" class="primary" onclick="App.fullFetch()">Fetch All Repositories</button>
+            </div>
+            <div id="full-fetch-status">The results of the full fetch will appear here.</div>
+        </div>
+    </div>
+
+    <div id="languageFilterDropdown" class="language-filter-dropdown"></div>
+
+<script>
+const App = {
+    // --- STATE ---
+    state: {
+        currentEntity: null, allRepos: [], filteredRepos: [], sortBy: 'stargazers_count', sortDir: 'desc',
+        languages: { all: new Set(), selected: new Set() }, apiKey: '',
+        isResizing: false,
+    },
+
+    // --- CONSTANTS ---
+    CACHE_KEYS: ['name', 'stargazers_count', 'language', 'created_at', 'updated_at', 'pushed_at', 'description', 'html_url'],
+    
+    // --- INITIALIZATION ---
+    init() {
+        document.addEventListener('DOMContentLoaded', () => {
+            this.populateEntityList();
+            this.autoSelectEntity();
+            this.initResizableColumns();
+            this.state.apiKey = localStorage.getItem('githubApiKey') || '';
+            document.getElementById('apiKey').value = this.state.apiKey;
+            
+            document.body.addEventListener('click', (e) => {
+                const dropdown = document.getElementById('languageFilterDropdown');
+                const button = document.getElementById('languageFilterButton');
+                if (dropdown && button && !dropdown.contains(e.target) && !button.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            }, true);
+        });
+    },
+
+    // --- UI & TABS ---
+    changeTab(tabName) {
+        document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+        document.querySelectorAll('.tab-button').forEach(tb => tb.classList.remove('active'));
+        document.getElementById(tabName).classList.add('active');
+        document.querySelector(`.tab-button[onclick="App.changeTab('${tabName}')"]`).classList.add('active');
+    },
+    
+    setStatus(message, type = 'info', container = 'status') {
+        const el = document.getElementById(container);
+        el.textContent = message;
+        el.className = type;
+    },
+
+    // --- CACHE & DATA MANAGEMENT ---
+    getCache(entity) { try { return JSON.parse(localStorage.getItem(`gh_repos_${entity}`)); } catch (e) { return null; } },
+    setCache(entity, data) { try { localStorage.setItem(`gh_repos_${entity}`, JSON.stringify(data)); } catch (e) { this.setStatus(`Error saving cache: ${e.message}`, 'error'); } },
+    getAllCachedEntities() {
+        const entities = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            if (localStorage.key(i).startsWith('gh_repos_')) {
+                entities.push(localStorage.key(i).replace('gh_repos_', ''));
+            }
+        }
+        return entities;
+    },
+
+    populateEntityList() {
+        const listEl = document.getElementById('entityList');
+        listEl.innerHTML = '';
+        const entities = this.getAllCachedEntities();
+        entities.forEach(entityName => {
+            const button = document.createElement('button');
+            button.className = 'entity-item';
+            button.textContent = entityName;
+            button.dataset.entity = entityName;
+            button.onclick = () => this.selectEntity(entityName);
+            listEl.appendChild(button);
+        });
+        document.getElementById('viewer-prompt').style.display = entities.length > 0 ? 'none' : 'block';
+    },
+
+    autoSelectEntity() {
+        const lastSelected = sessionStorage.getItem('selectedEntity');
+        const allEntities = this.getAllCachedEntities();
+
+        if (lastSelected && allEntities.includes(lastSelected)) {
+            this.selectEntity(lastSelected);
+            return;
+        }
+
+        const sortedEntities = allEntities
+            .map(name => ({ name, cache: this.getCache(name) }))
+            .filter(item => item.cache && item.cache.fetchedAt)
+            .sort((a, b) => new Date(b.cache.fetchedAt) - new Date(a.cache.fetchedAt));
+        
+        if (sortedEntities.length > 0) {
+            this.selectEntity(sortedEntities[0].name);
+        }
+    },
+
+    selectEntity(entity) {
+        if (entity) {
+            sessionStorage.setItem('selectedEntity', entity);
+        } else {
+            sessionStorage.removeItem('selectedEntity');
+        }
+
+        this.state.currentEntity = entity;
+        document.querySelectorAll('#entityList .entity-item').forEach(item => {
+            item.classList.toggle('active', item.dataset.entity === entity);
+        });
+        const resultsContainer = document.getElementById('results-container');
+        const prompt = document.getElementById('viewer-prompt');
+        if (!entity) { resultsContainer.style.display = 'none'; prompt.style.display = 'block'; return; }
+        
+        prompt.style.display = 'none';
+        const cachedData = this.getCache(entity);
+        if (cachedData && cachedData.repos) {
+            this.state.allRepos = cachedData.repos;
+            document.getElementById('currentEntityName').textContent = entity;
+            this.setStatus(`Displaying ${cachedData.repos.length} cached repos. Last updated: ${new Date(cachedData.fetchedAt).toLocaleString()}`, 'success');
+            document.getElementById('nameFilter').value = '';
+            document.getElementById('descriptionFilter').value = '';
+            this.state.languages.selected.clear();
+            this.buildLanguageFilter();
+            this.applyFilters();
+            resultsContainer.style.display = 'block';
+        } else {
+            resultsContainer.style.display = 'none';
+            this.setStatus(`No cache found for "${entity}". Use the Full Fetch tool.`, 'error');
+        }
+    },
+
+    deleteData() {
+        const entity = this.state.currentEntity;
+        if (!entity || !confirm(`Are you sure you want to delete all cached data for "${entity}"?`)) return;
+        localStorage.removeItem(`gh_repos_${entity}`);
+        this.populateEntityList();
+        this.selectEntity(null);
+        document.getElementById('results-container').style.display = 'none';
+        document.getElementById('viewer-prompt').style.display = 'block';
+    },
+
+    exportData() {
+        const entity = this.state.currentEntity;
+        if (!entity) return;
+        const data = this.getCache(entity);
+        if (!data) return;
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${entity}_repo_cache.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    },
+
+    importData(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = JSON.parse(e.target.result);
+                if (!data.entity || !data.repos || !data.fetchedAt) throw new Error("Invalid cache file format.");
+                this.setCache(data.entity, data);
+                this.populateEntityList();
+                this.selectEntity(data.entity);
+            } catch (err) { this.setStatus(`Import failed: ${err.message}`, 'error'); } 
+            finally { event.target.value = ''; }
+        };
+        reader.readAsText(file);
+    },
+
+    // --- GITHUB API FETCHING ---
+    async _fetch(url, options = {}) {
+        this.state.apiKey = document.getElementById('apiKey').value.trim();
+        if (this.state.apiKey) {
+            localStorage.setItem('githubApiKey', this.state.apiKey);
+            options.headers = { ...options.headers, 'Authorization': `token ${this.state.apiKey}` };
+        }
+        const response = await fetch(url, options);
+        if (response.status === 403) {
+             const resetDate = new Date(response.headers.get('X-RateLimit-Reset') * 1000);
+             throw new Error(`API rate limit exceeded. Resets at ${resetDate.toLocaleTimeString()}.`);
+        }
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`API Error: ${response.status} - ${errorData.message}`);
+        }
+        return response;
+    },
+
+    async fullFetch() {
+        const userInput = document.getElementById('repoUrl').value.trim();
+        const fetchButton = document.getElementById('fetchButton');
+        fetchButton.disabled = true;
+        this.setStatus('Starting full fetch...', 'info', 'full-fetch-status');
+        let entityName, entityType;
+
+        try {
+            entityName = userInput.includes('github.com') ? new URL(userInput).pathname.split('/')[1] : userInput.replace(/[^a-zA-Z0-9-]/g, '');
+            if (!entityName) throw new Error("Invalid user/org name.");
+
+            const userCheck = await this._fetch(`https://api.github.com/users/${entityName}`);
+            entityType = (await userCheck.json()).type === 'Organization' ? 'orgs' : 'users';
+
+            const initialUrl = `https://api.github.com/${entityType}/${entityName}/repos?per_page=100&page=1&sort=full_name`;
+            this.setStatus('Fetching page 1 to determine total pages...', 'info', 'full-fetch-status');
+            const initialResponse = await this._fetch(initialUrl);
+            let allRepos = await initialResponse.json();
+
+            const linkHeader = initialResponse.headers.get('Link');
+            let lastPage = 1;
+            if (linkHeader) {
+                const lastLink = linkHeader.split(',').find(s => s.includes('rel="last"'));
+                if (lastLink) lastPage = parseInt(new URL(lastLink.match(/<(.+)>/)[1]).searchParams.get('page'));
+            }
+
+            if (lastPage > 1) {
+                const pagePromises = [];
+                for (let i = 2; i <= lastPage; i++) {
+                    const pageUrl = `https://api.github.com/${entityType}/${entityName}/repos?per_page=100&page=${i}&sort=full_name`;
+                    pagePromises.push(this._fetch(pageUrl).then(res => res.json()));
+                }
+                this.setStatus(`Fetching pages 2 to ${lastPage} in parallel...`, 'info', 'full-fetch-status');
+                const settledResponses = await Promise.allSettled(pagePromises);
+                settledResponses.forEach(res => {
+                    if (res.status === 'fulfilled' && res.value) allRepos = allRepos.concat(res.value);
+                });
+            }
+
+            const simplifiedRepos = allRepos.map(repo => this.CACHE_KEYS.reduce((obj, key) => ({ ...obj, [key]: repo[key] }), {}));
+            this.setCache(entityName, { entity: entityName, fetchedAt: new Date().toISOString(), repos: simplifiedRepos });
+            this.setStatus(`Success! Fetched ${simplifiedRepos.length} repos for "${entityName}".`, 'success', 'full-fetch-status');
+            this.populateEntityList();
+            this.selectEntity(entityName);
+            this.changeTab('viewer');
+        } catch (error) { this.setStatus(`Error: ${error.message}`, 'error', 'full-fetch-status'); } 
+        finally { fetchButton.disabled = false; }
+    },
+
+    async update(entityToUpdate = null) {
+        const entity = entityToUpdate || this.state.currentEntity;
+        if (!entity) return;
+        const button = document.getElementById('updateButton');
+        if(button && !entityToUpdate) button.disabled = true;
+        this.setStatus(`Checking for updates for "${entity}"...`, 'info');
+        try {
+            const cachedData = this.getCache(entity);
+            if (!cachedData) throw new Error("No cache found to update.");
+            const latestCachedUpdate = cachedData.repos.reduce((latest, repo) => repo.updated_at > latest ? repo.updated_at : latest, '');
+            const userCheck = await this._fetch(`https://api.github.com/users/${entity}`);
+            const entityType = (await userCheck.json()).type === 'Organization' ? 'orgs' : 'users';
+            let recentRepos = [], page = 1, keepFetching = true;
+            while (keepFetching) {
+                this.setStatus(`Updating "${entity}": Fetching page ${page}...`, 'info');
+                const res = await this._fetch(`https://api.github.com/${entityType}/${entity}/repos?per_page=100&page=${page}&sort=updated`);
+                const pageRepos = await res.json();
+                if (pageRepos.length === 0) { keepFetching = false; continue; }
+                const lastRepoOnPage = pageRepos[pageRepos.length - 1];
+                if (new Date(lastRepoOnPage.updated_at) < new Date(latestCachedUpdate)) keepFetching = false;
+                recentRepos.push(...pageRepos.filter(r => new Date(r.updated_at) > new Date(latestCachedUpdate)));
+                page++;
+            }
+            if (recentRepos.length > 0) {
+                const repoMap = new Map(cachedData.repos.map(repo => [repo.name, repo]));
+                let newCount = 0, updatedCount = 0;
+                recentRepos.forEach(repo => { repoMap.has(repo.name) ? updatedCount++ : newCount++; repoMap.set(repo.name, this.CACHE_KEYS.reduce((obj, key) => ({ ...obj, [key]: repo[key] }), {})); });
+                cachedData.repos = Array.from(repoMap.values());
+                cachedData.fetchedAt = new Date().toISOString();
+                this.setCache(entity, cachedData);
+                this.setStatus(`Update for "${entity}" complete! Found ${newCount} new and ${updatedCount} updated repos.`, 'success');
+            } else {
+                this.setStatus(`Cache for "${entity}" is already up to date.`, 'success');
+            }
+            if (entity === this.state.currentEntity) this.selectEntity(entity);
+        } catch (error) { this.setStatus(`Update for "${entity}" failed: ${error.message}`, 'error'); } 
+        finally { if(button && !entityToUpdate) button.disabled = false; }
+    },
+
+    async updateAll() {
+        const allEntities = this.getAllCachedEntities();
+        for (const entity of allEntities) { await this.update(entity); }
+        this.setStatus('Finished updating all cached users.', 'success');
+    },
+
+    // --- TABLE RENDERING, SORTING, FILTERING ---
+    renderTable() {
+        const tbody = document.getElementById('repoTableBody');
+        tbody.innerHTML = '';
+        document.querySelectorAll('th .sort-indicator').forEach(el => el.textContent = '');
+        const activeTh = document.querySelector(`th[onclick="App.setSort('${this.state.sortBy}')"]`);
+        if (activeTh) activeTh.querySelector('.sort-indicator').textContent = this.state.sortDir === 'asc' ? '▲' : '▼';
+        if (this.state.filteredRepos.length === 0) { tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No repositories match filters.</td></tr>'; return; }
+        const fragment = document.createDocumentFragment();
+        for (const repo of this.state.filteredRepos) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><a href="${repo.html_url}" target="_blank" rel="noopener noreferrer" title="${repo.name}">${repo.name}</a></td>
+                <td>${repo.stargazers_count.toLocaleString()}</td>
+                <td>${repo.language || 'N/A'}</td>
+                <td>${new Date(repo.created_at).toLocaleDateString()}</td>
+                <td>${new Date(repo.updated_at).toLocaleDateString()}</td>
+                <td>${new Date(repo.pushed_at).toLocaleDateString()}</td>
+                <td title="${repo.description || ''}">${repo.description || ''}</td>`;
+            fragment.appendChild(tr);
+        }
+        tbody.appendChild(fragment);
+    },
+    setSort(column) {
+        if (this.state.isResizing) return;
+        this.state.sortDir = (this.state.sortBy === column && this.state.sortDir === 'desc') ? 'asc' : 'desc';
+        this.state.sortBy = column;
+        this.applyFilters();
+    },
+    _sortData(data) {
+        const { sortBy, sortDir } = this.state;
+        const dir = sortDir === 'asc' ? 1 : -1;
+        return [...data].sort((a, b) => {
+            let valA = a[sortBy], valB = b[sortBy];
+            if (typeof valA === 'string' && sortBy.endsWith('_at')) { valA = new Date(valA); valB = new Date(valB); } 
+            else if (typeof valA === 'string') { valA = (valA || '').toLowerCase(); valB = (valB || '').toLowerCase(); } 
+            else if (valA === null || valA === undefined) valA = -Infinity;
+            if (valB === null || valB === undefined) valB = -Infinity;
+            return (valA < valB ? -1 : (valA > valB ? 1 : 0)) * dir;
+        });
+    },
+    applyFilters() {
+        const nameFilter = document.getElementById('nameFilter').value.toLowerCase();
+        const descFilter = document.getElementById('descriptionFilter').value.toLowerCase();
+        const selectedLangs = this.state.languages.selected;
+        this.state.filteredRepos = this._sortData(this.state.allRepos.filter(repo => 
+            (!nameFilter || (repo.name && repo.name.toLowerCase().includes(nameFilter))) &&
+            (!descFilter || (repo.description && repo.description.toLowerCase().includes(descFilter))) &&
+            (selectedLangs.size === 0 || selectedLangs.has(repo.language || 'N/A'))
+        ));
+        this.renderTable();
+    },
+
+    // --- COLUMN FILTERS & RESIZING ---
+    buildLanguageFilter() {
+        this.state.languages.all = new Set([...new Set(this.state.allRepos.map(r => r.language || 'N/A'))].sort());
+        const dropdown = document.getElementById('languageFilterDropdown');
+        dropdown.innerHTML = '';
+        this.state.languages.all.forEach(lang => {
+            const label = document.createElement('label');
+            label.innerHTML = `<input type="checkbox" value="${lang}" onchange="App.updateSelectedLanguages()"> ${lang}`;
+            dropdown.appendChild(document.createElement('div')).appendChild(label);
+        });
+        document.getElementById('languageFilterButton').textContent = 'All Languages';
+    },
+    toggleLanguageFilter() {
+        const dropdown = document.getElementById('languageFilterDropdown');
+        const button = document.getElementById('languageFilterButton');
+        
+        if (dropdown.style.display === 'block') {
+            dropdown.style.display = 'none';
+        } else {
+            const rect = button.getBoundingClientRect();
+            dropdown.style.left = `${rect.left}px`;
+            dropdown.style.top = `${rect.bottom + 2}px`; // +2 for a small gap
+            dropdown.style.width = `${rect.width}px`;
+            dropdown.style.display = 'block';
+        }
+    },
+    updateSelectedLanguages() {
+        const selected = new Set();
+        document.querySelectorAll('#languageFilterDropdown input:checked').forEach(cb => selected.add(cb.value));
+        this.state.languages.selected = selected;
+        document.getElementById('languageFilterButton').textContent = selected.size > 0 ? `${selected.size} selected` : 'All Languages';
+        this.applyFilters();
+    },
+    // FIXED: Complete rewrite of column resizing logic
+    initResizableColumns() {
+        const table = document.getElementById('repoTable');
+        const headers = table.querySelectorAll('thead tr:first-child th');
+        
+        // Store original widths
+        const columnWidths = [];
+        headers.forEach((header, index) => {
+            columnWidths[index] = header.offsetWidth;
+        });
+
+        headers.forEach((header, index) => {
+            const handle = document.createElement('div');
+            handle.className = 'resize-handle';
+            header.appendChild(handle);
+
+            handle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.state.isResizing = true;
+
+                const startX = e.pageX;
+                const startWidth = header.offsetWidth;
+                const tableStartWidth = table.offsetWidth;
+                
+                // Get all column widths at start
+                const startWidths = [];
+                headers.forEach((h, i) => {
+                    startWidths[i] = h.offsetWidth;
+                });
+
+                const mouseMoveHandler = (moveEvent) => {
+                    const deltaX = moveEvent.pageX - startX;
+                    const newWidth = Math.max(50, startWidth + deltaX); // Minimum 50px
+                    
+                    // Set the width of the column being resized
+                    header.style.width = `${newWidth}px`;
+                    
+                    // Calculate new table width (original width + delta)
+                    const newTableWidth = tableStartWidth + deltaX;
+                    
+                    // Set explicit widths for ALL columns to prevent auto-adjustment
+                    headers.forEach((h, i) => {
+                        if (i !== index) {
+                            // Keep other columns at their original size
+                            h.style.width = `${startWidths[i]}px`;
+                        }
+                    });
+                    
+                    // Force the table to be at least as wide as the sum of columns
+                    let totalWidth = 0;
+                    headers.forEach(h => {
+                        totalWidth += parseInt(h.style.width) || h.offsetWidth;
+                    });
+                    table.style.minWidth = `${totalWidth}px`;
+                };
+
+                const mouseUpHandler = () => {
+                    document.removeEventListener('mousemove', mouseMoveHandler);
+                    document.removeEventListener('mouseup', mouseUpHandler);
+                    
+                    // Update stored widths
+                    headers.forEach((h, i) => {
+                        columnWidths[i] = h.offsetWidth;
+                    });
+                    
+                    // Use a timeout to prevent the sort click from firing immediately after resize
+                    setTimeout(() => { this.state.isResizing = false; }, 100);
+                };
+
+                document.addEventListener('mousemove', mouseMoveHandler);
+                document.addEventListener('mouseup', mouseUpHandler);
+            });
+        });
+    }
+};
+App.init();
+</script>
+</body>
+</html>

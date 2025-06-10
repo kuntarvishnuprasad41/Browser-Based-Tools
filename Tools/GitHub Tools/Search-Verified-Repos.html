@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Organization Search</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .container {
+            max-width: 1600px;
+            margin: auto;
+            padding: 2rem;
+        }
+        .table-sortable th {
+            position: relative;
+        }
+        .table-sortable th:hover {
+            cursor: pointer;
+            background-color: #e5e7eb;
+        }
+        #loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .filter-input {
+            width: 100%;
+            padding: 4px 8px;
+            font-size: 12px;
+            border-radius: 4px;
+            border: 1px solid #d1d5db;
+        }
+        .history-item {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .history-item:hover {
+            background-color: #e5e7eb;
+        }
+        .filter-popover {
+            position: absolute;
+            z-index: 10;
+            display: none;
+            width: 160px;
+            background-color: white;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 8px;
+        }
+        .filter-container:hover .filter-popover {
+            display: block;
+        }
+        /* Table layout fix */
+        .results-table {
+            table-layout: fixed;
+            width: 100%;
+        }
+        /* Organization column width and wrapping */
+        .org-column {
+            width: 25%; /* Adjust percentage as needed */
+            word-wrap: break-word;
+        }
+        /* Style for the domain checkboxes to flow in columns */
+        #associatedDomainsCheckboxes {
+            display: flex;
+            flex-direction: column;
+            flex-wrap: wrap;
+            align-content: flex-start;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container bg-white shadow-lg rounded-lg">
+    <header class="text-center mb-8">
+        <h1 class="text-4xl font-bold text-gray-800">GitHub Organization Search</h1>
+        <p class="text-gray-600 mt-2">Find verified organizations and check for shared members.</p>
+    </header>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 p-6 bg-gray-50 rounded-lg border border-gray-200">
+        <div class="md:col-span-2">
+            <label for="parentOrgQuery" class="block text-sm font-medium text-gray-700">Parent Organization</label>
+            <div class="mt-1 flex rounded-md shadow-sm">
+                <span class="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 sm:text-sm">github.com/</span>
+                <input type="text" id="parentOrgQuery" placeholder="e.g., adobe" class="flex-1 min-w-0 block w-full px-3 py-2 rounded-none rounded-r-md focus:ring-blue-500 focus:border-blue-500 sm:text-sm border-gray-300">
+            </div>
+        </div>
+        <div>
+            <label for="searchQuery" class="block text-sm font-medium text-gray-700">Search Term</label>
+            <input type="text" id="searchQuery" placeholder="e.g., google" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+        </div>
+        <div>
+            <label for="githubToken" class="block text-sm font-medium text-gray-700">GitHub Token (Required)
+                 <a href="https://github.com/settings/personal-access-tokens" target="_blank" class="text-xs text-blue-600 hover:underline ml-1">(Get a token)</a>
+            </label>
+            <input type="password" id="githubToken" placeholder="Your Personal Access Token" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+        </div>
+        <div class="md:col-span-2 flex items-center justify-between">
+            <div class="flex items-center">
+                <input id="overrideParentCheck" type="checkbox" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                <label for="overrideParentCheck" class="ml-2 block text-sm text-gray-900">Allow search without a parent organization</label>
+            </div>
+            <div class="flex items-center">
+                <input id="forceRefreshCheck" type="checkbox" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                <label for="forceRefreshCheck" class="ml-2 block text-sm text-gray-900">Force overwrite previous result</label>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex justify-center items-center gap-4 mb-8">
+        <button id="searchBtn" class="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors duration-300 shadow-md disabled:bg-gray-400 disabled:cursor-not-allowed">
+            <i class="fas fa-search mr-2"></i>Search
+        </button>
+        <button id="exportBtn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 transition-colors duration-300 shadow-md">
+            <i class="fas fa-file-export mr-2"></i>Export JSON
+        </button>
+    </div>
+
+    <div id="associationControls" class="hidden mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+        <label for="associatedDomainsCheckboxes" class="block text-sm font-medium text-gray-700">Associated Verified Domains</label>
+        <p class="text-xs text-gray-500 mb-2">Check domains to find orgs that share members with other verified orgs matching this selection.</p>
+        <div id="associatedDomainsCheckboxes" class="p-2 border rounded-md max-h-48 overflow-y-auto bg-white gap-x-4">
+            </div>
+        <button id="reEvaluateBtn" class="mt-3 bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors duration-300 shadow-md disabled:bg-gray-400">
+            <i class="fas fa-sync-alt mr-2"></i>Re-evaluate Associated Members
+        </button>
+    </div>
+
+    <div id="errorContainer" class="hidden my-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+        <div class="flex justify-between items-center">
+            <p id="errorSummary" class="text-red-700 font-semibold"></p>
+            <button id="toggleErrorDetailsBtn" class="text-sm text-blue-600 hover:underline">Show Details</button>
+        </div>
+        <div id="errorDetails" class="hidden mt-2 p-2 bg-red-100 rounded">
+            <p class="text-sm text-gray-700"><strong>Stage:</strong> <span id="errorStage"></span></p>
+            <p class="text-sm text-gray-700 mt-1"><strong>Message:</strong> <span id="errorMessage"></span></p>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-5 gap-6">
+        <div class="col-span-1 pr-4 border-r">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-lg font-semibold text-gray-700">Search History</h3>
+                <button id="clearAllHistoryBtn" class="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-red-600 hover:text-white transition-colors">Clear All</button>
+            </div>
+            <div id="historyContainer" class="space-y-2">
+                </div>
+        </div>
+
+        <div id="resultsContainer" class="col-span-4 hidden">
+            <div id="status" class="text-center my-4 text-gray-600"></div>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200 table-sortable results-table">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th scope="col" class="org-column px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" title="The official name and login of the organization.">Organization</th>
+                            <th scope="col" id="sortVerified" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" title="Whether the organization has a 'Verified' badge from GitHub.">
+                                Domains Verified <i class="fas fa-sort ml-1"></i>
+                            </th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" title="Public domains from the organization's website and email.">Domains</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" title="Whether the org shares any members with the parent organization or other verified associated organizations.">Shared Members</th>
+                        </tr>
+                        <tr class="bg-gray-100">
+                             <th class="px-6 py-1"></th> <th class="px-6 py-1 text-left relative filter-container">
+                                <button class="text-gray-600 hover:text-blue-600 text-xs font-medium">Filter <i class="fas fa-chevron-down ml-1"></i></button>
+                                <div id="verifiedFilterPopover" class="filter-popover">
+                                    <label class="flex items-center space-x-2"><input type="checkbox" class="filter-checkbox" data-filter-column="isVerified" value="true" checked><span>Verified</span></label>
+                                    <label class="flex items-center space-x-2"><input type="checkbox" class="filter-checkbox" data-filter-column="isVerified" value="false" checked><span>Not Verified</span></label>
+                                </div>
+                             </th>
+                             <th class="px-6 py-1">
+                                <div class="flex items-center gap-1">
+                                    <input type="text" id="domainFilter" class="filter-input" placeholder="Filter domains...">
+                                    <button id="autofillDomainBtn" title="Autofill with parent org's domains"><i class="fas fa-wand-magic-sparkles text-blue-500"></i></button>
+                                </div>
+                             </th>
+                             <th class="px-6 py-1">
+                                <div id="sharedMemberFilter" class="flex items-center space-x-3 text-xs font-medium text-gray-700">
+                                    <span>Filter:</span>
+                                    <label class="flex items-center space-x-1 cursor-pointer"><input type="radio" name="sharedMember" value="all" checked class="h-3 w-3"><span>All</span></label>
+                                    <label class="flex items-center space-x-1 cursor-pointer"><input type="radio" name="sharedMember" value="parent" class="h-3 w-3"><span>Parent</span></label>
+                                    <label class="flex items-center space-x-1 cursor-pointer"><input type="radio" name="sharedMember" value="associated" class="h-3 w-3"><span>Associated</span></label>
+                                </div>
+                             </th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsTable" class="bg-white divide-y divide-gray-200">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+     <div id="loaderContainer" class="hidden flex-col items-center justify-center my-8">
+        <div id="loader"></div>
+        <p id="loaderStatus" class="mt-4 text-gray-600 text-center"></p>
+        <button id="cancelSearchBtn" class="hidden mt-4 bg-gray-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-600 transition-colors duration-300 shadow-md">
+            <i class="fas fa-times-circle mr-2"></i>Cancel Current Search
+        </button>
+    </div>
+
+</div>
+
+<div id="clearCacheModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+    <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+        <div class="mt-3 text-center">
+            <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+                <i class="fas fa-exclamation-triangle text-red-600 text-xl"></i>
+            </div>
+            <h3 class="text-lg leading-6 font-medium text-gray-900 mt-4">Clear All Search History?</h3>
+            <div class="mt-2 px-7 py-3">
+                <p class="text-sm text-gray-500">This action cannot be undone. All cached search results will be permanently deleted.</p>
+            </div>
+            <div class="flex items-center justify-center my-4">
+                <input id="confirmClearCache" type="checkbox" class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded">
+                <label for="confirmClearCache" class="ml-2 block text-sm text-gray-900">I am sure I want to delete everything.</label>
+            </div>
+            <div class="items-center px-4 py-3">
+                <button id="holdToDeleteBtn" class="relative w-full px-4 py-2 bg-red-600 text-white text-base font-medium rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
+                    <div id="deleteProgress" class="absolute top-0 left-0 h-full bg-red-800 rounded-md transition-all duration-100" style="width: 0%;"></div>
+                    <span class="relative z-10">Hold to Delete</span>
+                </button>
+            </div>
+            <div class="items-center px-4 py-3">
+                 <button id="cancelClearCacheBtn" class="px-4 py-2 bg-gray-200 text-gray-800 text-base font-medium rounded-md w-full shadow-sm hover:bg-gray-300">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<script>
+// --- DOM Elements ---
+    const searchQueryEl = document.getElementById('searchQuery');
+    const githubTokenEl = document.getElementById('githubToken');
+    const parentOrgQueryEl = document.getElementById('parentOrgQuery');
+    const overrideParentCheckEl = document.getElementById('overrideParentCheck');
+    const forceRefreshCheckEl = document.getElementById('forceRefreshCheck');
+    const searchBtn = document.getElementById('searchBtn');
+    const resultsContainer = document.getElementById('resultsContainer');
+    const resultsTable = document.getElementById('resultsTable');
+    const statusEl = document.getElementById('status');
+    const sortVerifiedBtn = document.getElementById('sortVerified');
+    const exportBtn = document.getElementById('exportBtn');
+    const loaderContainer = document.getElementById('loaderContainer');
+    const loaderStatus = document.getElementById('loaderStatus');
+    const historyContainer = document.getElementById('historyContainer');
+    const domainFilterEl = document.getElementById('domainFilter');
+    const autofillDomainBtn = document.getElementById('autofillDomainBtn');
+    const associationControls = document.getElementById('associationControls');
+    const associatedDomainsCheckboxesEl = document.getElementById('associatedDomainsCheckboxes');
+    const reEvaluateBtn = document.getElementById('reEvaluateBtn');
+
+    // --- Error & Cancel Elements ---
+    const cancelSearchBtn = document.getElementById('cancelSearchBtn');
+    const errorContainer = document.getElementById('errorContainer');
+    const errorSummary = document.getElementById('errorSummary');
+    const toggleErrorDetailsBtn = document.getElementById('toggleErrorDetailsBtn');
+    const errorDetails = document.getElementById('errorDetails');
+    const errorStage = document.getElementById('errorStage');
+    const errorMessage = document.getElementById('errorMessage');
+
+    // --- Modal Elements ---
+    const clearCacheModal = document.getElementById('clearCacheModal');
+    const confirmClearCacheCheck = document.getElementById('confirmClearCache');
+    const holdToDeleteBtn = document.getElementById('holdToDeleteBtn');
+    const deleteProgress = document.getElementById('deleteProgress');
+    const cancelClearCacheBtn = document.getElementById('cancelClearCacheBtn');
+    const clearAllHistoryBtn = document.getElementById('clearAllHistoryBtn');
+
+    // --- State Management ---
+    let allResults = [];
+    let currentSort = { column: 'isVerified', direction: 'desc' };
+    let searchHistory = {};
+    let currentCacheKey = null;
+    let abortController = new AbortController();
+    
+    // --- On Page Load ---
+    document.addEventListener('DOMContentLoaded', () => {
+        const cachedToken = localStorage.getItem('githubToken');
+        if (cachedToken) githubTokenEl.value = cachedToken;
+
+        const cachedHistory = localStorage.getItem('githubSearchHistory');
+        if (cachedHistory) {
+            try {
+                searchHistory = JSON.parse(cachedHistory);
+                renderHistory();
+            } catch (e) {
+                console.error("Failed to parse cache:", e);
+                localStorage.removeItem('githubSearchHistory');
+            }
+        }
+        
+        // Link parent org input to search term input
+        parentOrgQueryEl.addEventListener('input', (e) => {
+            searchQueryEl.value = e.target.value;
+        });
+    });
+
+    // --- GraphQL Query ---
+    const GQL_QUERY = `
+      query SearchOrganizations($queryString: String!, $cursor: String) {
+        search(query: $queryString, type: USER, first: 100, after: $cursor) {
+          userCount
+          pageInfo { endCursor, hasNextPage }
+          nodes { 
+            ... on Organization {
+              id
+              name
+              login
+              isVerified
+              email
+              url
+              websiteUrl
+              membersWithRole(first: 100) {
+                totalCount
+                nodes {
+                  login
+                }
+              }
+            }
+          }
+        }
+      }`;
+
+    // --- Functions ---
+    function saveCache() {
+        localStorage.setItem('githubSearchHistory', JSON.stringify(searchHistory));
+    }
+
+    async function smartFetch(url, options, stage) {
+        if (abortController.signal.aborted) throw new DOMException('Search was canceled by the user.', 'AbortError');
+        
+        const token = githubTokenEl.value;
+        const headers = { ...options.headers };
+        if (token) headers['Authorization'] = `bearer ${token}`;
+        
+        let attempt = 0;
+        const maxAttempts = 5;
+
+        while (attempt < maxAttempts) {
+            if (abortController.signal.aborted) throw new DOMException('Search was canceled by the user.', 'AbortError');
+            
+            const response = await fetch(url, { ...options, headers, signal: abortController.signal });
+
+            if (response.ok) {
+                return response;
+            }
+
+            // Handle rate limiting
+            if (response.status === 403 || response.status === 429) {
+                const retryAfter = response.headers.get('Retry-After');
+                const rateLimitReset = response.headers.get('x-ratelimit-reset');
+
+                let waitSeconds = 60; // Default wait time
+                if (retryAfter) {
+                    waitSeconds = parseInt(retryAfter, 10);
+                } else if (rateLimitReset) {
+                    const resetTime = parseInt(rateLimitReset, 10) * 1000;
+                    waitSeconds = Math.max(0, Math.ceil((resetTime - Date.now()) / 1000));
+                }
+                
+                if (waitSeconds > 0) {
+                    await new Promise(resolve => {
+                        let remaining = Math.ceil(waitSeconds);
+                        const updateStatus = () => {
+                             loaderStatus.innerHTML = `
+                                <i class="fas fa-pause-circle text-yellow-500 mr-2"></i>
+                                Hit API rate limit and told to wait ${waitSeconds}s. Waiting for ${remaining} seconds... (Stage: ${stage})
+                            `;
+                        };
+                        updateStatus();
+
+                        const interval = setInterval(() => {
+                             if (abortController.signal.aborted) {
+                                clearInterval(interval);
+                                resolve(); // Let the abort error be thrown at the top of the loop
+                                return;
+                            }
+                            remaining--;
+                            updateStatus();
+                            if (remaining <= 0) {
+                                clearInterval(interval);
+                                resolve();
+                            }
+                        }, 1000);
+                    });
+                    attempt++;
+                    continue; // Retry the request
+                }
+            }
+
+            // For other non-OK responses
+            const errorData = await response.json().catch(() => ({ message: `HTTP Error: ${response.status} ${response.statusText}` }));
+            const err = new Error(errorData.message || `API request failed at stage: ${stage}`);
+            err.stage = stage;
+            err.status = response.status;
+            throw err;
+        }
+
+        const finalErr = new Error(`Request failed after ${maxAttempts} attempts. Last stage: ${stage}.`);
+        finalErr.stage = stage;
+        throw finalErr;
+    }
+
+    async function fetchGraphQLPage(queryString, cursor) {
+        const body = JSON.stringify({ query: GQL_QUERY, variables: { queryString, cursor } });
+        const response = await smartFetch('https://api.github.com/graphql', { method: 'POST', body, headers: { 'Content-Type': 'application/json' } }, 'GraphQL Search');
+        return response.json();
+    }
+    
+    async function fetchAllMembersREST(orgLogin, memberCacheForSearch) {
+        if (memberCacheForSearch[orgLogin]) {
+            console.log(`Using cached members for ${orgLogin}`);
+            return new Set(memberCacheForSearch[orgLogin]);
+        }
+
+        let members = new Set();
+        let page = 1;
+        let hasMore = true;
+        
+        while(hasMore) {
+            if (abortController.signal.aborted) throw new DOMException('Search was canceled by the user.', 'AbortError');
+            const stage = `Fetching Members for ${orgLogin} (Page ${page})`;
+
+            try {
+                const url = `https://api.github.com/orgs/${orgLogin}/members?per_page=100&page=${page}`;
+                const response = await smartFetch(url, { headers: { 'Accept': 'application/vnd.github.v3+json' } }, stage);
+                const data = await response.json();
+
+                if (data.length < 100) {
+                    hasMore = false;
+                }
+                data.forEach(member => members.add(member.login));
+                page++;
+
+            } catch (error) {
+                if (error.status === 404) {
+                    hasMore = false; 
+                } else {
+                    throw error;
+                }
+            }
+            
+            if (hasMore) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+        }
+        memberCacheForSearch[orgLogin] = Array.from(members);
+        // The saveCache() call is now handled by the calling function to ensure it's part of the history object
+        return members;
+    }
+
+    function extractDomain(urlString) {
+        if (!urlString) return null;
+        try {
+            if (urlString.includes('@')) return urlString.split('@')[1];
+            const url = new URL(urlString);
+            let hostname = url.hostname;
+            if (hostname.startsWith('www.')) hostname = hostname.substring(4);
+            return hostname;
+        } catch (e) {
+            return urlString;
+        }
+    }
+    
+    async function performMemberChecks(localMemberCache) {
+        allResults.forEach(org => org.sharedMembersType = 'none');
+        const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
+        if (!parentLogin || overrideParentCheckEl.checked) {
+            return;
+        }
+        
+        // This function now assumes all necessary member lists are already in localMemberCache.
+        const parentMembers = new Set(localMemberCache[parentLogin] || []);
+        if (parentMembers.size === 0) return;
+
+        loaderStatus.textContent = `Comparing members...`;
+        allResults.forEach(targetOrg => {
+            // Check only if it's the parent or if data is missing.
+            if (targetOrg.login.toLowerCase() === parentLogin || !targetOrg.membersWithRole) {
+                targetOrg.sharedMembersType = 'N/A';
+                return;
+            }
+            const targetMembers = new Set((localMemberCache[targetOrg.login] || []).concat(targetOrg.membersWithRole.nodes.map(m => m.login)));
+            const intersection = new Set([...parentMembers].filter(member => targetMembers.has(member)));
+            if (intersection.size > 0) {
+                targetOrg.sharedMembersType = 'parent';
+            }
+        });
+    }
+
+    async function reEvaluateAssociatedMembers(memberCacheForSearch) {
+        const originalButtonHtml = reEvaluateBtn.innerHTML;
+        reEvaluateBtn.disabled = true;
+        reEvaluateBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Re-evaluating...';
+        const startTime = Date.now();
+        
+        allResults.forEach(org => {
+            if(org.baseSharedMembersType) {
+                org.sharedMembersType = org.baseSharedMembersType;
+            }
+        });
+
+        const selectedDomains = new Set();
+        document.querySelectorAll('#associatedDomainsCheckboxes input:checked').forEach(cb => {
+            selectedDomains.add(cb.value);
+        });
+
+        if (selectedDomains.size > 0) {
+            const verifiedAssociatedOrgs = allResults.filter(org => 
+                org.isVerified && 
+                org.publicDomains.some(d => selectedDomains.has(d))
+            );
+
+            const associatedMembers = new Set();
+            for (const assocOrg of verifiedAssociatedOrgs) {
+                if (assocOrg.membersWithRole && assocOrg.membersWithRole.totalCount === 0) {
+                    continue; 
+                }
+                try {
+                     const members = await fetchAllMembersREST(assocOrg.login, memberCacheForSearch);
+                     members.forEach(m => associatedMembers.add(m));
+                } catch(e) {
+                     console.error(`Could not fetch members for associated org ${assocOrg.login}: ${e.message}. This org will be skipped.`);
+                }
+            }
+
+            allResults.forEach(targetOrg => {
+                if (targetOrg.sharedMembersType !== 'none') {
+                    return;
+                }
+                
+                if (verifiedAssociatedOrgs.some(o => o.login === targetOrg.login)) {
+                    targetOrg.sharedMembersType = 'N/A';
+                    return;
+                }
+                
+                const targetMembers = new Set(targetOrg.membersWithRole.nodes.map(m => m.login));
+                const intersection = new Set([...associatedMembers].filter(member => targetMembers.has(member)));
+                if (intersection.size > 0) {
+                     targetOrg.sharedMembersType = 'associated';
+                }
+            });
+        }
+        
+        if (currentCacheKey && searchHistory[currentCacheKey]) {
+            searchHistory[currentCacheKey].selectedDomains = Array.from(selectedDomains);
+            searchHistory[currentCacheKey].results = allResults;
+            searchHistory[currentCacheKey].members = memberCacheForSearch;
+            saveCache();
+        }
+        
+        const elapsedTime = Date.now() - startTime;
+        const minDuration = 150; 
+        const remainingTime = minDuration - elapsedTime;
+        if (remainingTime > 0) {
+            await new Promise(resolve => setTimeout(resolve, remainingTime));
+        }
+
+        reEvaluateBtn.disabled = false;
+        reEvaluateBtn.innerHTML = originalButtonHtml;
+        renderTable();
+    }
+    
+    async function initialAssociatedMemberSetup(preSelectedDomains = null, memberCacheForSearch = {}) {
+        const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
+        if (!parentLogin || overrideParentCheckEl.checked) {
+            associationControls.style.display = 'none';
+            return;
+        }
+
+        const parentOrg = allResults.find(o => o.login.toLowerCase() === parentLogin);
+        const parentDomains = new Set(parentOrg ? parentOrg.publicDomains : []);
+        
+        const allVerifiedDomains = new Set();
+        allResults.forEach(org => {
+            if (org.isVerified && org.publicDomains) {
+                org.publicDomains.forEach(domain => allVerifiedDomains.add(domain));
+            }
+        });
+
+        associatedDomainsCheckboxesEl.innerHTML = '';
+        if (allVerifiedDomains.size > 0) {
+            const parentDomainList = Array.from(parentDomains).sort();
+            const otherDomains = Array.from(allVerifiedDomains).filter(d => !parentDomains.has(d));
+            const relatedDomains = otherDomains.filter(d => Array.from(parentDomains).some(pd => d.endsWith('.' + pd) || pd.endsWith('.' + d))).sort();
+            const unrelatedDomains = otherDomains.filter(d => !relatedDomains.includes(d)).sort();
+            const sortedDomains = [...parentDomainList, ...relatedDomains, ...unrelatedDomains];
+
+            sortedDomains.forEach(domain => {
+                let isChecked = (preSelectedDomains !== null) ? preSelectedDomains.includes(domain) : parentDomains.has(domain);
+                const checkboxId = `domain-cb-${domain.replace(/\./g, '-')}`;
+                const checkboxWrapper = document.createElement('div');
+                checkboxWrapper.className = 'flex items-center py-1';
+                checkboxWrapper.innerHTML = `
+                    <input id="${checkboxId}" type="checkbox" value="${domain}" ${isChecked ? 'checked' : ''} class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded">
+                    <label for="${checkboxId}" class="ml-2 block text-sm text-gray-900 truncate" title="${domain}">${domain}</label>
+                `;
+                associatedDomainsCheckboxesEl.appendChild(checkboxWrapper);
+            });
+            associationControls.style.display = 'block';
+            await reEvaluateAssociatedMembers(memberCacheForSearch); // Perform initial evaluation
+        } else {
+             associationControls.style.display = 'none';
+        }
+    }
+
+    async function fetchAllData(queryString) {
+        allResults = [];
+        let memberCacheForThisSearch = {};
+        let hasNextPage = true, cursor = null, pagesFetched = 0, totalCount = 0;
+        let apiWarning = null;
+        
+        loaderContainer.style.display = 'flex';
+        cancelSearchBtn.style.display = 'block';
+        loaderStatus.textContent = 'Starting search...';
+        
+        while (hasNextPage) {
+            if (abortController.signal.aborted) throw new DOMException('Search Canceled', 'AbortError');
+            
+            const result = await fetchGraphQLPage(queryString, cursor);
+            if (result.errors) {
+                const err = new Error(result.errors.map(e => e.message).join('\n'));
+                err.stage = `GraphQL Search (Page ${pagesFetched + 1})`;
+                throw err;
+            }
+            
+            const searchResult = result.data.search;
+            allResults.push(...searchResult.nodes.filter(node => node && node.id));
+            totalCount = searchResult.userCount;
+            hasNextPage = searchResult.pageInfo.hasNextPage;
+            cursor = searchResult.pageInfo.endCursor;
+            pagesFetched++;
+            
+            loaderStatus.textContent = `Fetched ${allResults.length} of ~${totalCount} organizations (Page ${pagesFetched})...`;
+            
+            if (pagesFetched >= 10 && hasNextPage) {
+                apiWarning = `GitHub API search result limit of 1000 items reached. Not all results could be fetched.`;
+                hasNextPage = false;
+            }
+
+            if (hasNextPage) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+        }
+
+        // Proactively fetch all members for orgs with >100
+        for (const org of allResults) {
+            if (org.membersWithRole && org.membersWithRole.totalCount > org.membersWithRole.nodes.length) {
+                loaderStatus.textContent = `Fetching all ${org.membersWithRole.totalCount} members for ${org.login}...`;
+                await fetchAllMembersREST(org.login, memberCacheForThisSearch);
+            } else if (org.membersWithRole) {
+                memberCacheForThisSearch[org.login] = org.membersWithRole.nodes.map(m => m.login);
+            }
+        }
+
+        loaderStatus.textContent = `Processing domains...`;
+        allResults.forEach(org => {
+            if (org.id) {
+                const domains = new Set();
+                if (org.websiteUrl) domains.add(extractDomain(org.websiteUrl));
+                if (org.email) domains.add(extractDomain(`mailto:${org.email}`));
+                org.publicDomains = Array.from(domains);
+            }
+        });
+
+        await performMemberChecks(memberCacheForThisSearch);
+        allResults.forEach(org => org.baseSharedMembersType = org.sharedMembersType);
+        
+        await initialAssociatedMemberSetup(null, memberCacheForThisSearch);
+        
+        return { warning: apiWarning, members: memberCacheForThisSearch };
+    }
+
+    function getActiveFilters() {
+        const filters = {
+            isVerified: new Set(),
+            domainText: domainFilterEl.value.toLowerCase(),
+            sharedMember: document.querySelector('input[name="sharedMember"]:checked').value
+        };
+        document.querySelectorAll('.filter-checkbox:checked').forEach(cb => {
+            const column = cb.dataset.filterColumn;
+            if (filters[column]) {
+                 filters[column].add(cb.value);
+            }
+        });
+        return filters;
+    }
+    
+    function renderTable() {
+        const filters = getActiveFilters();
+        const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
+        let parentOrg = null;
+        
+        let filteredResults = allResults.filter(org => {
+            if (parentLogin && org.login.toLowerCase() === parentLogin) {
+                parentOrg = org;
+                return false;
+            }
+
+            const isVerifiedMatch = filters.isVerified.has(String(org.isVerified));
+            const domainMatch = !filters.domainText || (org.publicDomains && org.publicDomains.join(' ').toLowerCase().includes(filters.domainText));
+            
+            const sharedMemberFilter = filters.sharedMember;
+            let sharedMemberMatch = true;
+            if (sharedMemberFilter !== 'all') {
+                sharedMemberMatch = org.sharedMembersType === sharedMemberFilter;
+            }
+
+            return isVerifiedMatch && domainMatch && sharedMemberMatch;
+        });
+
+        filteredResults.sort((a, b) => {
+            const valA = a[currentSort.column], valB = b[currentSort.column];
+            const comparison = valA > valB ? 1 : (valA < valB ? -1 : 0);
+            return currentSort.direction === 'desc' ? comparison * -1 : comparison;
+        });
+        
+        const sortIcon = sortVerifiedBtn.querySelector('i');
+        sortIcon.className = `fas fa-sort ml-1 ${currentSort.direction === 'asc' ? 'fa-sort-up' : 'fa-sort-down'}`;
+
+        resultsTable.innerHTML = ''; 
+        const displayedResults = parentOrg ? [parentOrg, ...filteredResults] : filteredResults;
+        const cachedItem = searchHistory[currentCacheKey];
+
+        if (displayedResults.length === 0) {
+            statusEl.textContent = 'No matching organizations found for your filter.';
+             if (cachedItem && cachedItem.warning) {
+                const warningIcon = document.createElement('i');
+                warningIcon.className = 'fas fa-exclamation-triangle text-yellow-500 ml-2';
+                warningIcon.title = cachedItem.warning;
+                statusEl.appendChild(warningIcon);
+            }
+            resultsTable.innerHTML = '<tr><td colspan="4" class="text-center py-4">No results match your current filter.</td></tr>';
+            return;
+        }
+
+        statusEl.textContent = `Displaying ${displayedResults.length} of ${allResults.length} total results.`;
+        if (cachedItem && cachedItem.warning) {
+            const warningIcon = document.createElement('i');
+            warningIcon.className = 'fas fa-exclamation-triangle text-yellow-500 ml-2';
+            warningIcon.title = cachedItem.warning;
+            statusEl.appendChild(warningIcon);
+        }
+
+        const createSharedMemberHtml = (status) => {
+             switch(status) {
+                case 'parent': return '<i class="fas fa-check-circle text-green-500 mr-2" title="Shares members with Parent Org"></i> Parent';
+                case 'associated': return '<i class="fas fa-link text-blue-600 mr-2" title="Shares members with an Associated Org"></i> Associated';
+                case 'error': return '<i class="fas fa-exclamation-triangle text-yellow-500 mr-2"></i> Error';
+                case 'N/A': return '<span class="text-gray-400">N/A</span>';
+                case 'none':
+                default: return '<i class="fas fa-times-circle text-gray-400 mr-2"></i> No';
+            }
+        };
+
+        displayedResults.forEach(org => {
+            const row = document.createElement('tr');
+            row.dataset.login = org.login;
+            if(parentOrg && org.login === parentOrg.login) {
+                row.className = 'bg-blue-50 font-semibold';
+            }
+            
+            const publicDomainsHtml = (org.publicDomains && org.publicDomains.length > 0) 
+                ? org.publicDomains.join('<br>') 
+                : '<span class="text-gray-400">N/A</span>';
+            
+            const verifiedHtml = org.isVerified ? `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Verified</span>` : '';
+
+            row.innerHTML = `
+                <td class="px-6 py-4 org-column"><a href="${org.url}" target="_blank" class="hover:underline text-blue-600"><div class="font-medium">${org.name || org.login}</div><div class="text-sm text-gray-500">${org.login}</div></a></td>
+                <td class="px-6 py-4 whitespace-nowrap">${verifiedHtml}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${publicDomainsHtml}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-left">${createSharedMemberHtml(org.sharedMembersType)}</td>
+            `;
+            resultsTable.appendChild(row);
+        });
+    }
+
+    function renderHistory() {
+        historyContainer.innerHTML = '';
+        Object.keys(searchHistory).forEach(key => {
+            const [query, parent] = key.split('|');
+            const div = document.createElement('div');
+            div.className = 'history-item group p-2 rounded-md flex justify-between items-center text-sm relative';
+            
+            const textSpan = document.createElement('span');
+            textSpan.className = 'flex-grow truncate pr-2';
+            textSpan.textContent = `${query} (Parent: ${parent || 'None'})`;
+            textSpan.title = `${query} (Parent: ${parent || 'None'})`;
+            textSpan.dataset.cacheKey = key;
+            
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-history-item text-gray-400 hover:text-red-500 ml-2 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity';
+            deleteBtn.dataset.cacheKey = key;
+            deleteBtn.title = 'Delete this entry';
+            deleteBtn.innerHTML = `<i class="fas fa-trash-alt"></i>`;
+            
+            div.appendChild(textSpan);
+            div.appendChild(deleteBtn);
+            historyContainer.appendChild(div);
+        });
+    }
+
+    function saveToHistory(key, data, selectedDomains, warning, members) {
+        searchHistory[key] = {
+            results: data,
+            selectedDomains: selectedDomains || [],
+            warning: warning || null,
+            members: members || {}
+        };
+        saveCache();
+        renderHistory();
+    }
+
+    function loadFromHistory(event) {
+        const key = event.target.dataset.cacheKey;
+        currentCacheKey = key;
+        const [query, parent] = key.split('|');
+        const cachedItem = searchHistory[key];
+
+        if (cachedItem && cachedItem.results) {
+            allResults = cachedItem.results;
+            
+            if (allResults.length > 0 && typeof allResults[0].baseSharedMembersType === 'undefined') {
+                 allResults.forEach(org => org.baseSharedMembersType = org.sharedMembersType);
+                 cachedItem.results = allResults;
+                 saveCache();
+            }
+
+            searchQueryEl.value = query;
+            parentOrgQueryEl.value = parent;
+            
+            resultsContainer.style.display = 'block';
+            loaderContainer.style.display = 'none';
+            statusEl.innerHTML = '';
+            statusEl.classList.remove('text-red-500');
+
+            initialAssociatedMemberSetup(cachedItem.selectedDomains, cachedItem.members); 
+        }
+    }
+    
+    // --- Event Listeners ---
+    searchBtn.addEventListener('click', async () => {
+        const query = searchQueryEl.value.trim();
+        const parentOrg = parentOrgQueryEl.value.trim();
+        if (!query) {
+            alert('Please enter a search query.');
+            return;
+        }
+        if (!parentOrg && !overrideParentCheckEl.checked) {
+            alert('Please provide a parent organization or check the override box to search.');
+            return;
+        }
+        
+        localStorage.setItem('githubToken', githubTokenEl.value);
+        
+        abortController = new AbortController();
+        errorContainer.style.display = 'none';
+        statusEl.innerHTML = '';
+        
+        currentCacheKey = `${query}|${parentOrg}`;
+        if (forceRefreshCheckEl.checked) {
+            delete searchHistory[currentCacheKey];
+            forceRefreshCheckEl.checked = false;
+        }
+
+        if (searchHistory[currentCacheKey]) {
+            loadFromHistory({ target: { dataset: { cacheKey: currentCacheKey } } });
+            return;
+        }
+
+        searchBtn.disabled = true;
+        searchBtn.querySelector('i').className = 'fas fa-spinner fa-spin mr-2';
+        resultsContainer.style.display = 'none';
+        associationControls.style.display = 'none';
+        statusEl.classList.remove('text-red-500');
+
+        try {
+            const { warning, members } = await fetchAllData(`${query} in:name type:org`);
+
+            if (allResults.length > 0) {
+                const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
+                const parentOrgData = allResults.find(o => o.login.toLowerCase() === parentLogin);
+                const initialDomains = parentOrgData ? parentOrgData.publicDomains : [];
+                saveToHistory(currentCacheKey, allResults, initialDomains, warning, members);
+                resultsContainer.style.display = 'block';
+                renderTable();
+            } else {
+                 statusEl.innerHTML = 'Search completed, but no organizations were found.';
+                 if (warning) {
+                    const warningIcon = document.createElement('i');
+                    warningIcon.className = 'fas fa-exclamation-triangle text-yellow-500 ml-2';
+                    warningIcon.title = warning;
+                    statusEl.appendChild(warningIcon);
+                 }
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                errorSummary.textContent = 'Search Canceled.';
+                errorDetails.style.display = 'none';
+                toggleErrorDetailsBtn.style.display = 'none';
+            } else {
+                errorSummary.textContent = 'An error occurred during the search.';
+                toggleErrorDetailsBtn.style.display = 'block';
+                errorStage.textContent = error.stage || 'Unknown';
+                errorMessage.textContent = error.message;
+            }
+             errorContainer.style.display = 'block';
+        } finally {
+            searchBtn.disabled = false;
+            searchBtn.querySelector('i').className = 'fas fa-search mr-2';
+            loaderContainer.style.display = 'none';
+            cancelSearchBtn.style.display = 'none';
+        }
+    });
+
+    sortVerifiedBtn.addEventListener('click', () => {
+        currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+        renderTable();
+    });
+    
+    reEvaluateBtn.addEventListener('click', () => {
+        const cachedItem = searchHistory[currentCacheKey];
+        if (cachedItem) {
+            reEvaluateAssociatedMembers(cachedItem.members || {});
+        }
+    });
+
+    document.querySelectorAll('.filter-checkbox').forEach(cb => cb.addEventListener('change', renderTable));
+    document.querySelectorAll('input[name="sharedMember"]').forEach(radio => radio.addEventListener('change', renderTable));
+    domainFilterEl.addEventListener('input', renderTable);
+    
+    autofillDomainBtn.addEventListener('click', () => {
+        const parentOrgName = parentOrgQueryEl.value.trim();
+        const parentLogin = parentOrgName.toLowerCase();
+        if (!parentLogin || allResults.length === 0) {
+            alert('Please specify a parent org and run a search first.');
+            return;
+        }
+        const parentOrg = allResults.find(o => o.login.toLowerCase() === parentLogin);
+        if (parentOrg && parentOrg.publicDomains.length > 0) {
+            const preferredDomain = `${parentLogin}.com`;
+            let domainToUse = parentOrg.publicDomains.includes(preferredDomain) ? preferredDomain : parentOrg.publicDomains[0];
+            domainFilterEl.value = domainToUse;
+            renderTable();
+        } else {
+            alert('Parent organization not found in results or has no public domains.');
+        }
+    });
+    
+    exportBtn.addEventListener('click', () => {
+        if (!currentCacheKey || !searchHistory[currentCacheKey]) {
+            alert("No active search results to export. Please run a search or load one from history.");
+            return;
+        }
+        
+        const dataToExport = searchHistory[currentCacheKey];
+        const jsonString = JSON.stringify(dataToExport, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        const query = searchQueryEl.value.trim() || 'export';
+        a.download = `github-orgs-${query.replace(/\s+/g, '_')}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+
+    cancelSearchBtn.addEventListener('click', () => {
+        abortController.abort();
+    });
+
+    toggleErrorDetailsBtn.addEventListener('click', () => {
+        const isHidden = errorDetails.style.display === 'none';
+        errorDetails.style.display = isHidden ? 'block' : 'none';
+        toggleErrorDetailsBtn.textContent = isHidden ? 'Hide Details' : 'Show Details';
+    });
+
+    // --- Cache Management Event Listeners ---
+    historyContainer.addEventListener('click', e => {
+        const loadTarget = e.target.closest('span');
+        const deleteTarget = e.target.closest('.delete-history-item');
+
+        if (deleteTarget) {
+            const key = deleteTarget.dataset.cacheKey;
+            if (confirm(`Are you sure you want to delete the cache for "${key.split('|')[0]}"?`)) {
+                delete searchHistory[key];
+                saveCache();
+                renderHistory();
+
+                if (Object.keys(searchHistory).length === 0) {
+                    resultsContainer.style.display = 'none';
+                    associationControls.style.display = 'none';
+                }
+            }
+        } else if (loadTarget) {
+             loadFromHistory(e);
+        }
+    });
+
+    clearAllHistoryBtn.addEventListener('click', () => {
+        clearCacheModal.style.display = 'block';
+    });
+
+    cancelClearCacheBtn.addEventListener('click', () => {
+        clearCacheModal.style.display = 'none';
+        confirmClearCacheCheck.checked = false;
+        holdToDeleteBtn.disabled = true;
+        deleteProgress.style.width = '0%';
+    });
+    
+    confirmClearCacheCheck.addEventListener('change', () => {
+        holdToDeleteBtn.disabled = !confirmClearCacheCheck.checked;
+    });
+
+    let pressTimer = null;
+    let progressInterval = null;
+    const holdDuration = 3000;
+
+    const startHold = (e) => {
+        if (e.target.disabled) return;
+        e.preventDefault();
+        
+        let startTime = Date.now();
+        
+        pressTimer = setTimeout(() => {
+            clearInterval(progressInterval);
+            searchHistory = {};
+            // The memberCache is now part of searchHistory, so it's cleared implicitly.
+            localStorage.removeItem('githubSearchCache');
+            renderHistory();
+            resultsContainer.style.display = 'none';
+            associationControls.style.display = 'none';
+            cancelClearCacheBtn.click();
+        }, holdDuration);
+
+        progressInterval = setInterval(() => {
+            const elapsedTime = Date.now() - startTime;
+            const progress = Math.min((elapsedTime / holdDuration) * 100, 100);
+            deleteProgress.style.width = `${progress}%`;
+        }, 50);
+    };
+
+    const cancelHold = () => {
+        clearTimeout(pressTimer);
+        clearInterval(progressInterval);
+        deleteProgress.style.width = '0%';
+    };
+
+    holdToDeleteBtn.addEventListener('mousedown', startHold);
+    holdToDeleteBtn.addEventListener('mouseup', cancelHold);
+    holdToDeleteBtn.addEventListener('mouseleave', cancelHold);
+    holdToDeleteBtn.addEventListener('touchstart', startHold, { passive: false });
+    holdToDeleteBtn.addEventListener('touchend', cancelHold);
+</script>
+
+</body>
+</html>
