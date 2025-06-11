@@ -94,6 +94,11 @@
             text-overflow: ellipsis;
             box-sizing: border-box; /* Include padding in width calculations */
         }
+        #repoTableBody td:first-child {
+            white-space: normal;
+            word-break: break-all; /* Allow long names to wrap */
+            min-width: 18rem;
+        }
         thead tr:last-child th { border-bottom: none; }
         tr:last-child td { border-bottom: none; }
         th { 
