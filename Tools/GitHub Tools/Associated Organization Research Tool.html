@@ -453,6 +453,40 @@
 
     });
 
+    /* ------------------------------------------------------------------ *
+    *  Tiny concurrency-pool for REST requests (GraphQL stays serial!)   *
+    * ------------------------------------------------------------------ */
+    const MAX_CONCURRENT_REST_REQUESTS = 5;          // tune as desired
+    let   activeRestRequests           = 0;
+    const restQueue                    = [];
+
+    function enqueueRest(fn) {
+        return new Promise((resolve, reject) => {
+            restQueue.push({ fn, resolve, reject });
+            processRestQueue();
+        });
+    }
+
+    function processRestQueue() {
+        if (activeRestRequests >= MAX_CONCURRENT_REST_REQUESTS || restQueue.length === 0) return;
+
+        const { fn, resolve, reject } = restQueue.shift();
+        activeRestRequests++;
+        fn()
+        .then(resolve)
+        .catch(reject)
+        .finally(() => {
+            activeRestRequests--;
+            processRestQueue();
+        });
+    }
+
+    /* A thin wrapper so the rest of the code can keep calling “smartFetch*”. */
+    async function smartFetchREST(url, options, stage) {
+        return enqueueRest(() => smartFetch(url, options, stage));
+    }
+
+
     // --- GraphQL Query ---
     const GQL_QUERY = `
       query SearchOrganizations($queryString: String!, $cursor: String) {
@@ -468,7 +502,7 @@
               email
               url
               websiteUrl
-              membersWithRole(first: 10) {
+              membersWithRole(first: 20) {
                 totalCount
                 nodes {
                   login
@@ -587,12 +621,11 @@
 
     /* Conditional GET helper - Check if anything has been modified and actually needs to fetch */
     async function pullMembersFromGitHub(orgLogin, etag) {
-        let members   = new Set();
-        let page      = 1;
-        let hasMore   = true;
-        let storedEtag = null;
+        const members    = new Set();
+        let   page       = 1;
+        let   storedEtag = null;
 
-        while (hasMore) {
+        while (true) {
             const url   = `https://api.github.com/orgs/${orgLogin}/members?per_page=100&page=${page}`;
             const stage = `Refreshing members for ${orgLogin} (page ${page})`;
             const hdrs  = { 'Accept': 'application/vnd.github.v3+json' };
@@ -600,13 +633,14 @@
 
             let resp;
             try {
-                resp = await smartFetch(url, { headers: hdrs }, stage);
+                /* NOTE: we run REST calls through the pool */
+                resp = await smartFetchREST(url, { headers: hdrs }, stage);
             } catch (err) {
                 if (err.status === 304) {
-                    // Nothing has changed – propagate the “no-update” signal
+                    // Nothing changed – propagate that to the caller
                     return { members: null, etag };
                 }
-                throw err;         // let every other error surface
+                throw err; // Other errors bubble up
             }
 
             if (!storedEtag && resp.headers.has('etag')) {
@@ -616,9 +650,11 @@
             const data = await resp.json();
             data.forEach(m => members.add(m.login));
 
-            hasMore = data.length === 100;
+            if (data.length < 100) break;     // last page reached
             page++;
-            if (hasMore) await new Promise(r => setTimeout(r, 50));
+
+            /* tiny breather to stay nice to the API */
+            await new Promise(r => setTimeout(r, 50));
         }
 
         return { members: Array.from(members), etag: storedEtag };
