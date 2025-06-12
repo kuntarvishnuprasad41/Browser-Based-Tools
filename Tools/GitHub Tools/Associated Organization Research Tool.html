@@ -743,6 +743,31 @@
             }
         }
 
+        const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
+        if (parentLogin && !overrideParentCheckEl.checked) {
+            const parentOrgExists = allResults.some(org => org.login.toLowerCase() === parentLogin);
+            if (!parentOrgExists) {
+                loaderStatus.textContent = `Parent org '${parentLogin}' not in initial results. Fetching it directly...`;
+                await new Promise(resolve => setTimeout(resolve, 50)); 
+                try {
+                    const parentQueryString = `user:${parentLogin} type:org`;
+                    const result = await fetchGraphQLPage(parentQueryString, null);
+                    if (result.errors) {
+                        console.warn(`Could not fetch parent org '${parentLogin}': ${result.errors.map(e => e.message).join('\n')}`);
+                    } else if (result.data.search.nodes && result.data.search.nodes.length > 0) {
+                        const parentOrgData = result.data.search.nodes[0];
+                        if (parentOrgData && parentOrgData.id) {
+                            allResults.push(parentOrgData);
+                        }
+                    } else {
+                         console.warn(`Direct fetch for parent org '${parentLogin}' returned no results.`);
+                    }
+                } catch (e) {
+                    console.warn(`An error occurred while fetching the parent org directly: ${e.message}`);
+                }
+            }
+        }
+
         // Proactively fetch all members for orgs with >100
         for (const org of allResults) {
             if (org.membersWithRole && org.membersWithRole.totalCount > org.membersWithRole.nodes.length) {
@@ -929,6 +954,7 @@
 
             searchQueryEl.value = query;
             parentOrgQueryEl.value = parent;
+            domainFilterEl.value = '';
             
             resultsContainer.style.display = 'block';
             loaderContainer.style.display = 'none';
