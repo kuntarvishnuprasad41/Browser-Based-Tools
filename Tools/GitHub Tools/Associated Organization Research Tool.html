@@ -195,14 +195,31 @@
     </div>
 
     <div class="grid grid-cols-5 gap-6">
-        <div class="col-span-1 pr-4 border-r dark:border-gray-700">
-            <div class="flex justify-between items-center mb-2">
-                <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-200">Search History</h3>
-                <button id="clearAllHistoryBtn" class="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-red-600 hover:text-white transition-colors dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-red-600 dark:hover:text-white">Clear All</button>
+        <div class="mb-2" >
+            <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-1">
+                Search History
+            </h3>
+
+            <div class="flex items-center">
+                <button id="clearAllHistoryBtn"
+                        class="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded
+                            hover:bg-red-600 hover:text-white transition-colors
+                            dark:bg-gray-700 dark:text-gray-300
+                            dark:hover:bg-red-600 dark:hover:text-white">
+                    Clear All
+                </button>
+
+                <button id="refreshCacheBtn"
+                        class="ml-2 px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded
+                            hover:bg-blue-600 hover:text-white transition-colors
+                            dark:bg-gray-700 dark:text-gray-300
+                            dark:hover:bg-blue-600 dark:hover:text-white">
+                    Refresh Members Lists
+                </button>
             </div>
-            <div id="historyContainer" class="space-y-2">
-                </div>
+            <div id="historyContainer" class="mt-4 space-y-2"></div>
         </div>
+
 
         <div id="resultsContainer" class="col-span-4 hidden">
             <div id="status" class="text-center my-4 text-gray-600 dark:text-gray-400"></div>
@@ -272,6 +289,15 @@
             <div class="flex items-center justify-center my-4">
                 <input id="confirmClearCache" type="checkbox" class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded dark:bg-gray-900 dark:border-gray-600">
                 <label for="confirmClearCache" class="ml-2 block text-sm text-gray-900 dark:text-gray-200">I am sure I want to delete everything.</label>
+            </div>
+            <div class="flex items-center justify-center my-2">
+                <input id="alsoClearMembersCheck"
+                    type="checkbox"
+                    class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded dark:bg-gray-900 dark:border-gray-600">
+                <label for="alsoClearMembersCheck"
+                    class="ml-2 block text-sm text-gray-900 dark:text-gray-200">
+                    Also clear members cache
+                </label>
             </div>
             <div class="items-center px-4 py-3">
                 <button id="holdToDeleteBtn" class="relative w-full px-4 py-2 bg-red-600 text-white text-base font-medium rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
@@ -361,6 +387,7 @@
     // --- Modal Elements ---
     const clearCacheModal = document.getElementById('clearCacheModal');
     const confirmClearCacheCheck = document.getElementById('confirmClearCache');
+    const alsoClearMembersCheck = document.getElementById('alsoClearMembersCheck');
     const holdToDeleteBtn = document.getElementById('holdToDeleteBtn');
     const deleteProgress = document.getElementById('deleteProgress');
     const cancelClearCacheBtn = document.getElementById('cancelClearCacheBtn');
@@ -372,6 +399,11 @@
     let searchHistory = {};
     let currentCacheKey = null;
     let abortController = new AbortController();
+
+    let globalMembersCache = {};
+    function saveGlobalMembersCache() {
+        localStorage.setItem('githubOrgMembers', JSON.stringify(globalMembersCache));
+    }
     
     // --- On Page Load ---
     document.addEventListener('DOMContentLoaded', () => {
@@ -393,6 +425,32 @@
         parentOrgQueryEl.addEventListener('input', (e) => {
             searchQueryEl.value = e.target.value;
         });
+
+        const storedMembers = localStorage.getItem('githubOrgMembers');
+        if (storedMembers) {
+            try { globalMembersCache = JSON.parse(storedMembers); }
+            catch { localStorage.removeItem('githubOrgMembers'); }
+        }
+
+        document.getElementById('refreshCacheBtn').addEventListener('click', async () => {
+            if (!confirm('Refresh all organisation-member lists now?')) return;
+
+            const localMemberCache = {};           // fresh per-run scratch
+            let updates = 0;
+
+            for (const org of Object.keys(globalMembersCache)) {
+                try {
+                    if (await refreshMembersREST(org, localMemberCache)) updates++;
+                } catch (e) {
+                    console.error(`Failed to refresh ${org}:`, e);
+                }
+            }
+
+            alert(updates
+                ? `${updates} organisation cache${updates > 1 ? 's were' : ' was'} updated.`
+                : 'All organisation caches are already up-to-date.');
+        });
+
     });
 
     // --- GraphQL Query ---
@@ -410,7 +468,7 @@
               email
               url
               websiteUrl
-              membersWithRole(first: 100) {
+              membersWithRole(first: 10) {
                 totalCount
                 nodes {
                   login
@@ -507,47 +565,80 @@
         return response.json();
     }
     
-    async function fetchAllMembersREST(orgLogin, memberCacheForSearch) {
-        if (memberCacheForSearch[orgLogin]) {
-            console.log(`Using cached members for ${orgLogin}`);
-            return new Set(memberCacheForSearch[orgLogin]);
+    async function fetchAllMembersREST(orgLogin, localMemberCache) {
+        // ---------- fast paths ----------
+        const globalEntry = globalMembersCache[orgLogin];
+
+        if (localMemberCache[orgLogin]) {
+            return new Set(localMemberCache[orgLogin]);
+        }
+        if (globalEntry && Array.isArray(globalEntry.members)) {
+            localMemberCache[orgLogin] = globalEntry.members;
+            return new Set(globalEntry.members);
         }
 
-        let members = new Set();
-        let page = 1;
-        let hasMore = true;
-        
-        while(hasMore) {
-            if (abortController.signal.aborted) throw new DOMException('Search was canceled by the user.', 'AbortError');
-            const stage = `Fetching Members for ${orgLogin} (Page ${page})`;
-
-            try {
-                const url = `https://api.github.com/orgs/${orgLogin}/members?per_page=100&page=${page}`;
-                const response = await smartFetch(url, { headers: { 'Accept': 'application/vnd.github.v3+json' } }, stage);
-                const data = await response.json();
-
-                if (data.length < 100) {
-                    hasMore = false;
-                }
-                data.forEach(member => members.add(member.login));
-                page++;
-
-            } catch (error) {
-                if (error.status === 404) {
-                    hasMore = false; 
-                } else {
-                    throw error;
-                }
-            }
-            
-            if (hasMore) {
-                await new Promise(resolve => setTimeout(resolve, 50));
-            }
-        }
-        memberCacheForSearch[orgLogin] = Array.from(members);
-        // The saveCache() call is now handled by the calling function to ensure it's part of the history object
-        return members;
+        // ---------- cold fetch ----------
+        const { members, etag } = await pullMembersFromGitHub(orgLogin, null);
+        globalMembersCache[orgLogin] = { members, etag };
+        localMemberCache[orgLogin]   = members;
+        saveGlobalMembersCache();
+        return new Set(members);
     }
+
+    /* Conditional GET helper - Check if anything has been modified and actually needs to fetch */
+    async function pullMembersFromGitHub(orgLogin, etag) {
+        let members   = new Set();
+        let page      = 1;
+        let hasMore   = true;
+        let storedEtag = null;
+
+        while (hasMore) {
+            const url   = `https://api.github.com/orgs/${orgLogin}/members?per_page=100&page=${page}`;
+            const stage = `Refreshing members for ${orgLogin} (page ${page})`;
+            const hdrs  = { 'Accept': 'application/vnd.github.v3+json' };
+            if (etag && page === 1) hdrs['If-None-Match'] = etag;
+
+            let resp;
+            try {
+                resp = await smartFetch(url, { headers: hdrs }, stage);
+            } catch (err) {
+                if (err.status === 304) {
+                    // Nothing has changed – propagate the “no-update” signal
+                    return { members: null, etag };
+                }
+                throw err;         // let every other error surface
+            }
+
+            if (!storedEtag && resp.headers.has('etag')) {
+                storedEtag = resp.headers.get('etag');
+            }
+
+            const data = await resp.json();
+            data.forEach(m => members.add(m.login));
+
+            hasMore = data.length === 100;
+            page++;
+            if (hasMore) await new Promise(r => setTimeout(r, 50));
+        }
+
+        return { members: Array.from(members), etag: storedEtag };
+    }
+
+
+    /* Refresh one organisation and update both caches in-place. Returns true if anything changed. */
+    async function refreshMembersREST(orgLogin, localMemberCache) {
+        const existing = globalMembersCache[orgLogin] ?? { members: [], etag: null };
+        const { members, etag } = await pullMembersFromGitHub(orgLogin, existing.etag);
+
+        if (members === null) {            // 304 → unchanged
+            return false;
+        }
+        globalMembersCache[orgLogin] = { members, etag };
+        localMemberCache[orgLogin]   = members;
+        saveGlobalMembersCache();
+        return true;
+    }
+
 
     function extractDomain(urlString) {
         if (!urlString) return null;
@@ -768,13 +859,20 @@
             }
         }
 
-        // Proactively fetch all members for orgs with >100
+        // Proactively fetch all members for orgs where the total count is greater than the nodes fetched
         for (const org of allResults) {
             if (org.membersWithRole && org.membersWithRole.totalCount > org.membersWithRole.nodes.length) {
                 loaderStatus.textContent = `Fetching all ${org.membersWithRole.totalCount} members for ${org.login}...`;
                 await fetchAllMembersREST(org.login, memberCacheForThisSearch);
             } else if (org.membersWithRole) {
-                memberCacheForThisSearch[org.login] = org.membersWithRole.nodes.map(m => m.login);
+                const arr = org.membersWithRole.nodes.map(m => m.login);
+                memberCacheForThisSearch[org.login] = arr;
+
+                const entry = globalMembersCache[org.login];
+                if (!entry || !Array.isArray(entry.members) || entry.members.length !== arr.length) {
+                    globalMembersCache[org.login] = { members: arr, etag: null };
+                    saveGlobalMembersCache();
+                }
             }
         }
 
@@ -1002,7 +1100,7 @@
         statusEl.classList.remove('text-red-500');
 
         try {
-            const { warning, members } = await fetchAllData(`${query} in:name type:org`);
+            const { warning, members } = await fetchAllData(`${query} type:org`);
 
             if (allResults.length > 0) {
                 const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
@@ -1134,8 +1232,9 @@
     cancelClearCacheBtn.addEventListener('click', () => {
         clearCacheModal.style.display = 'none';
         confirmClearCacheCheck.checked = false;
-        holdToDeleteBtn.disabled = true;
-        deleteProgress.style.width = '0%';
+        alsoClearMembersCheck.checked   = false;   // ← new
+        holdToDeleteBtn.disabled        = true;
+        deleteProgress.style.width      = '0%';
     });
     
     confirmClearCacheCheck.addEventListener('change', () => {
@@ -1149,23 +1248,31 @@
     const startHold = (e) => {
         if (e.target.disabled) return;
         e.preventDefault();
-        
-        let startTime = Date.now();
-        
+
+        const startTime = Date.now();
+
         pressTimer = setTimeout(() => {
             clearInterval(progressInterval);
+
+            // Always wipe search-history
             searchHistory = {};
-            // The memberCache is now part of searchHistory, so it's cleared implicitly.
-            localStorage.removeItem('githubSearchCache');
+            localStorage.removeItem('githubSearchHistory');
+
+            // Wipe members cache only if the user asked for it
+            if (alsoClearMembersCheck.checked) {
+                globalMembersCache = {};
+                localStorage.removeItem('githubOrgMembers');
+            }
+
             renderHistory();
-            resultsContainer.style.display = 'none';
+            resultsContainer.style.display   = 'none';
             associationControls.style.display = 'none';
             cancelClearCacheBtn.click();
         }, holdDuration);
 
         progressInterval = setInterval(() => {
-            const elapsedTime = Date.now() - startTime;
-            const progress = Math.min((elapsedTime / holdDuration) * 100, 100);
+            const elapsed  = Date.now() - startTime;
+            const progress = Math.min((elapsed / holdDuration) * 100, 100);
             deleteProgress.style.width = `${progress}%`;
         }, 50);
     };
