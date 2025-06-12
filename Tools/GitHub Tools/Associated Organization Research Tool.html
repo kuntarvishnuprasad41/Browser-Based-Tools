@@ -1100,7 +1100,7 @@
         statusEl.classList.remove('text-red-500');
 
         try {
-            const { warning, members } = await fetchAllData(`${query} type:org`);
+            const { warning, members } = await fetchAllData(`type:org "${query}" in:name OR "${query}" in:login repos:>0`);
 
             if (allResults.length > 0) {
                 const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
