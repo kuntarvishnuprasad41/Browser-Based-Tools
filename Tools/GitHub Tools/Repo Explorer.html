@@ -729,7 +729,7 @@
                     const simplifiedRepos = allRepos.map(repo => this.CACHE_KEYS.reduce((obj, key) => ({ ...obj, [key]: repo[key] }), {}));
                     await this.setCache(entityName, { entity: entityName, fetchedAt: new Date().toISOString(), repos: simplifiedRepos });
                     this.setStatus(`Fetched ${simplifiedRepos.length} repos. Now fetching release information...`, 'success', 'full-fetch-status');
-                    await this.fetchReleasesForEntity(entityName);
+                    await this.fetchReleasesForEntity(entityName, simplifiedRepos.length, 'full-fetch-status');
                     this.setStatus(`Success! Fetched ${simplifiedRepos.length} repos with release information for "${entityName}".`, 'success', 'full-fetch-status');
                     await this.populateEntityList();
                     await this.selectEntity(entityName);
@@ -806,14 +806,15 @@
                 }
             },
 
-            async fetchReleasesForEntity(entityName) {
+            async fetchReleasesForEntity(entityName, expectedRepoCount = null, fetchStatusName = null) {
                 if (!entityName) {
                     console.error("No entity name provided for fetching releases.");
                     return;
                 }
 
                 const cachedData = await this.getCache(entityName);
-                if (!cachedData || !cachedData.repos) return;
+                if (!cachedData || !cachedData.repos) 
+                    return;
 
                 try {
                     // Check if entity is user or org
@@ -823,6 +824,9 @@
                     // Show initial status if this is the current entity
                     if (entityName === this.state.currentEntity) {
                         this.setStatus(`Fetching release information for ${cachedData.repos.length} repositories...`, 'info');
+                        if (!expectedRepoCount && cachedData.repos) {
+                            expectedRepoCount = cachedData.repos.length;
+                        }
                     }
 
                     const query = `
@@ -889,10 +893,11 @@
                         });
 
                         processedCount += repositories.nodes.length;
-
-                        // Update progress if this is the current entity
-                        if (entityName === this.state.currentEntity) {
-                            this.setStatus(`Fetching release information... (${processedCount}/${cachedData.repos.length} repos processed)`, 'info');
+                        let denominatorString = expectedRepoCount ? `/${expectedRepoCount}` : '';
+                        if (fetchStatusName) {
+                            this.setStatus(`Fetching release information for ${entityName}... (${processedCount}${denominatorString} repos processed)`, 'info', fetchStatusName);
+                        } else if (entityName === this.state.currentEntity) {
+                            this.setStatus(`Fetching release information... (${processedCount}${denominatorString} repos processed)`, 'info');
                         }
 
                         hasNextPage = repositories.pageInfo.hasNextPage;
@@ -987,7 +992,7 @@
                                 return 1;
                             if (repo.has_releases === false) 
                                 return 0;
-                            
+
                             return -1;
                         };
                         valA = getVal(a);
