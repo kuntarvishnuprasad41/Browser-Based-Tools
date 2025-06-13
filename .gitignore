@@ -1,3 +1,5 @@
 # Ignore files starting with an underscore, which will be used for cached or generated files
 _*
 
+.vscode/
+
