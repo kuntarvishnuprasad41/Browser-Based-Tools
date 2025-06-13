@@ -411,648 +411,709 @@
 
     <div id="languageFilterDropdown" class="language-filter-dropdown"></div>
 
-<script>
-const App = {
-    // --- STATE ---
-    state: {
-        currentEntity: null, allRepos: [], filteredRepos: [], sortBy: 'stargazers_count', sortDir: 'desc',
-        languages: { all: new Set(), selected: new Set() }, apiKey: '',
-        isResizing: false, releaseInfo: {},
-    },
+    <script>
+        const DB = {
+            _db: null,
+            DB_NAME: 'GitHubRepoExplorerDB',
+            DB_VERSION: 1,
+            STORES: {
+                ENTITIES: 'entities',
+                CONFIG: 'config'
+            },
 
-    // --- CONSTANTS ---
-    CACHE_KEYS: ['name', 'stargazers_count', 'language', 'created_at', 'updated_at', 'pushed_at', 'description', 'html_url', 'has_exe', 'has_releases'],
-    
-    // --- INITIALIZATION ---
-    init() {
-        document.addEventListener('DOMContentLoaded', () => {
-            this.populateEntityList();
-            this.autoSelectEntity();
-            this.initResizableColumns();
-            this.state.apiKey = localStorage.getItem('githubApiKey') || '';
-            document.getElementById('apiKey').value = this.state.apiKey;
-            
-            document.body.addEventListener('click', (e) => {
-                const dropdown = document.getElementById('languageFilterDropdown');
-                const button = document.getElementById('languageFilterButton');
-                if (dropdown && button && !dropdown.contains(e.target) && !button.contains(e.target)) {
-                    dropdown.style.display = 'none';
-                }
-            }, true);
-        });
-    },
+            async init() {
+                if (this._db) return;
+                return new Promise((resolve, reject) => {
+                    const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
 
-    // --- UI & TABS ---
-    changeTab(tabName) {
-        document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
-        document.querySelectorAll('.tab-button').forEach(tb => tb.classList.remove('active'));
-        document.getElementById(tabName).classList.add('active');
-        document.querySelector(`.tab-button[onclick="App.changeTab('${tabName}')"]`).classList.add('active');
-    },
-    
-    setStatus(message, type = 'info', container = 'status') {
-        const el = document.getElementById(container);
-        el.textContent = message;
-        el.className = type;
-    },
+                    request.onerror = (event) => {
+                        console.error("IndexedDB error:", request.error);
+                        reject("IndexedDB error: " + request.error);
+                    };
 
-    // --- CACHE & DATA MANAGEMENT ---
-    getCache(entity) { 
-        try { 
-            return JSON.parse(localStorage.getItem(`gh_repos_${entity}`)); 
-        } catch (e) { 
-            return null; 
-        } 
-    },
+                    request.onupgradeneeded = (event) => {
+                        const db = event.target.result;
+                        if (!db.objectStoreNames.contains(this.STORES.ENTITIES)) {
+                            db.createObjectStore(this.STORES.ENTITIES, { keyPath: 'entity' });
+                        }
+                        if (!db.objectStoreNames.contains(this.STORES.CONFIG)) {
+                            db.createObjectStore(this.STORES.CONFIG, { keyPath: 'key' });
+                        }
+                    };
 
-    setCache(entity, data) { 
-        try { 
-            localStorage.setItem(`gh_repos_${entity}`, JSON.stringify(data)); 
-        } catch (e) { 
-            this.setStatus(`Error saving cache: ${e.message}`, 'error'); 
-        } 
-    },
-    
-    getAllCachedEntities() {
-        const entities = [];
-        for (let i = 0; i < localStorage.length; i++) {
-            if (localStorage.key(i).startsWith('gh_repos_')) {
-                entities.push(localStorage.key(i).replace('gh_repos_', ''));
+                    request.onsuccess = (event) => {
+                        this._db = event.target.result;
+                        resolve();
+                    };
+                });
+            },
+
+            async _getStore(storeName, mode = 'readonly') {
+                if (!this._db) await this.init();
+                return this._db.transaction(storeName, mode).objectStore(storeName);
+            },
+
+            async get(storeName, key) {
+                const store = await this._getStore(storeName);
+                return new Promise((resolve, reject) => {
+                    const request = store.get(key);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+            },
+
+            async set(storeName, value) {
+                const store = await this._getStore(storeName, 'readwrite');
+                return new Promise((resolve, reject) => {
+                    const request = store.put(value);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+            },
+
+            async delete(storeName, key) {
+                const store = await this._getStore(storeName, 'readwrite');
+                return new Promise((resolve, reject) => {
+                    const request = store.delete(key);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+            },
+
+            async getAllKeys(storeName) {
+                const store = await this._getStore(storeName);
+                return new Promise((resolve, reject) => {
+                    const request = store.getAllKeys();
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
             }
-        }
-        return entities;
-    },
-
-    populateEntityList() {
-        const listEl = document.getElementById('entityList');
-        listEl.innerHTML = '';
-        const entities = this.getAllCachedEntities();
-        entities.forEach(entityName => {
-            const button = document.createElement('button');
-            button.className = 'entity-item';
-            button.textContent = entityName;
-            button.dataset.entity = entityName;
-            button.onclick = () => this.selectEntity(entityName);
-            listEl.appendChild(button);
-        });
-        document.getElementById('viewer-prompt').style.display = entities.length > 0 ? 'none' : 'block';
-    },
-
-    autoSelectEntity() {
-        const lastSelected = sessionStorage.getItem('selectedEntity');
-        const allEntities = this.getAllCachedEntities();
-
-        if (lastSelected && allEntities.includes(lastSelected)) {
-            this.selectEntity(lastSelected);
-            return;
-        }
-
-        const sortedEntities = allEntities
-            .map(name => ({ name, cache: this.getCache(name) }))
-            .filter(item => item.cache && item.cache.fetchedAt)
-            .sort((a, b) => new Date(b.cache.fetchedAt) - new Date(a.cache.fetchedAt));
-        
-        if (sortedEntities.length > 0) {
-            this.selectEntity(sortedEntities[0].name);
-        }
-    },
-
-    selectEntity(entity) {
-        if (entity) {
-            sessionStorage.setItem('selectedEntity', entity);
-        } else {
-            sessionStorage.removeItem('selectedEntity');
-        }
-
-        this.state.currentEntity = entity;
-        this.state.releaseInfo = {};
-        document.querySelectorAll('#entityList .entity-item').forEach(item => {
-            item.classList.toggle('active', item.dataset.entity === entity);
-        });
-        const resultsContainer = document.getElementById('results-container');
-        const prompt = document.getElementById('viewer-prompt');
-        if (!entity) { resultsContainer.style.display = 'none'; prompt.style.display = 'block'; return; }
-        
-        prompt.style.display = 'none';
-        const cachedData = this.getCache(entity);
-        if (cachedData && cachedData.repos) {
-            this.state.allRepos = cachedData.repos;
-            document.getElementById('currentEntityName').textContent = entity;
-            this.setStatus(`Displaying ${cachedData.repos.length} cached repos. Last updated: ${new Date(cachedData.fetchedAt).toLocaleString()}`, 'success');
-            document.getElementById('nameFilter').value = '';
-            document.getElementById('descriptionFilter').value = '';
-            this.state.languages.selected.clear();
-            this.buildLanguageFilter();
-            this.applyFilters();
-            resultsContainer.style.display = 'block';
-        } else {
-            resultsContainer.style.display = 'none';
-            this.setStatus(`No cache found for "${entity}". Use the Full Fetch tool.`, 'error');
-        }
-    },
-
-    deleteData() {
-        const entity = this.state.currentEntity;
-        if (!entity || !confirm(`Are you sure you want to delete all cached data for "${entity}"?`)) return;
-        localStorage.removeItem(`gh_repos_${entity}`);
-        this.populateEntityList();
-        this.selectEntity(null);
-        document.getElementById('results-container').style.display = 'none';
-        document.getElementById('viewer-prompt').style.display = 'block';
-    },
-
-    exportData() {
-        const entity = this.state.currentEntity;
-        if (!entity) return;
-        const data = this.getCache(entity);
-        if (!data) return;
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `${entity}_repo_cache.json`;
-        a.click();
-        URL.revokeObjectURL(a.href);
-    },
-
-    importData(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const data = JSON.parse(e.target.result);
-                if (!data.entity || !data.repos || !data.fetchedAt) throw new Error("Invalid cache file format.");
-                this.setCache(data.entity, data);
-                this.populateEntityList();
-                this.selectEntity(data.entity);
-            } catch (err) { this.setStatus(`Import failed: ${err.message}`, 'error'); } 
-            finally { event.target.value = ''; }
         };
-        reader.readAsText(file);
-    },
 
-    // --- GITHUB API FETCHING ---
-    async _fetch(url, options = {}) {
-        this.state.apiKey = document.getElementById('apiKey').value.trim();
-        if (this.state.apiKey) {
-            localStorage.setItem('githubApiKey', this.state.apiKey);
-            options.headers = { ...options.headers, 'Authorization': `token ${this.state.apiKey}` };
-        }
-        const response = await fetch(url, options);
-        if (response.status === 403) {
-             const resetDate = new Date(response.headers.get('X-RateLimit-Reset') * 1000);
-             throw new Error(`API rate limit exceeded. Resets at ${resetDate.toLocaleTimeString()}.`);
-        }
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(`API Error: ${response.status} - ${errorData.message}`);
-        }
-        return response;
-    },
+        const App = {
+            // --- STATE ---
+            state: {
+                currentEntity: null, allRepos: [], filteredRepos: [], sortBy: 'stargazers_count', sortDir: 'desc',
+                languages: { all: new Set(), selected: new Set() }, apiKey: '',
+                isResizing: false, releaseInfo: {},
+            },
 
-    async fullFetch() {
-        const userInput = document.getElementById('repoUrl').value.trim();
-        const fetchButton = document.getElementById('fetchButton');
-        fetchButton.disabled = true;
-        this.setStatus('Starting full fetch...', 'info', 'full-fetch-status');
-        let entityName, entityType;
+            // --- CONSTANTS ---
+            CACHE_KEYS: ['name', 'stargazers_count', 'language', 'created_at', 'updated_at', 'pushed_at', 'description', 'html_url', 'has_exe', 'has_releases'],
 
-        try {
-            entityName = userInput.includes('github.com') ? new URL(userInput).pathname.split('/')[1] : userInput.replace(/[^a-zA-Z0-9-]/g, '');
-            if (!entityName) throw new Error("Invalid user/org name.");
+            // --- INITIALIZATION ---
+            async init() {
+                await DB.init();
 
-            const userCheck = await this._fetch(`https://api.github.com/users/${entityName}`);
-            entityType = (await userCheck.json()).type === 'Organization' ? 'orgs' : 'users';
+                const apiKeyConfig = await DB.get(DB.STORES.CONFIG, 'githubApiKey');
+                this.state.apiKey = apiKeyConfig ? apiKeyConfig.value : '';
+                document.getElementById('apiKey').value = this.state.apiKey;
 
-            const initialUrl = `https://api.github.com/${entityType}/${entityName}/repos?per_page=100&page=1&sort=full_name`;
-            this.setStatus('Fetching page 1 to determine total pages...', 'info', 'full-fetch-status');
-            const initialResponse = await this._fetch(initialUrl);
-            let allRepos = await initialResponse.json();
+                await this.populateEntityList();
+                await this.autoSelectEntity();
+                this.initResizableColumns();
 
-            const linkHeader = initialResponse.headers.get('Link');
-            let lastPage = 1;
-            if (linkHeader) {
-                const lastLink = linkHeader.split(',').find(s => s.includes('rel="last"'));
-                if (lastLink) lastPage = parseInt(new URL(lastLink.match(/<(.+)>/)[1]).searchParams.get('page'));
-            }
+                document.body.addEventListener('click', (e) => {
+                    const dropdown = document.getElementById('languageFilterDropdown');
+                    const button = document.getElementById('languageFilterButton');
+                    if (dropdown && button && !dropdown.contains(e.target) && !button.contains(e.target)) {
+                        dropdown.style.display = 'none';
+                    }
+                }, true);
+            },
 
-            if (lastPage > 1) {
-                const pagePromises = [];
-                for (let i = 2; i <= lastPage; i++) {
-                    const pageUrl = `https://api.github.com/${entityType}/${entityName}/repos?per_page=100&page=${i}&sort=full_name`;
-                    pagePromises.push(this._fetch(pageUrl).then(res => res.json()));
+            // --- UI & TABS ---
+            changeTab(tabName) {
+                document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+                document.querySelectorAll('.tab-button').forEach(tb => tb.classList.remove('active'));
+                document.getElementById(tabName).classList.add('active');
+                document.querySelector(`.tab-button[onclick="App.changeTab('${tabName}')"]`).classList.add('active');
+            },
+
+            setStatus(message, type = 'info', container = 'status') {
+                const el = document.getElementById(container);
+                el.textContent = message;
+                el.className = type;
+            },
+
+            // --- CACHE & DATA MANAGEMENT ---
+            async getCache(entity) {
+                return await DB.get(DB.STORES.ENTITIES, entity);
+            },
+
+            async setCache(entity, data) {
+                try {
+                    await DB.set(DB.STORES.ENTITIES, data);
+                } catch (e) {
+                    this.setStatus(`Error saving cache: ${e.message}`, 'error');
                 }
-                this.setStatus(`Fetching pages 2 to ${lastPage} in parallel...`, 'info', 'full-fetch-status');
-                const settledResponses = await Promise.allSettled(pagePromises);
-                settledResponses.forEach(res => {
-                    if (res.status === 'fulfilled' && res.value) allRepos = allRepos.concat(res.value);
+            },
+
+            async getAllCachedEntities() {
+                return await DB.getAllKeys(DB.STORES.ENTITIES);
+            },
+
+            async populateEntityList() {
+                const listEl = document.getElementById('entityList');
+                listEl.innerHTML = '';
+                const entities = await this.getAllCachedEntities();
+                entities.forEach(entityName => {
+                    const button = document.createElement('button');
+                    button.className = 'entity-item';
+                    button.textContent = entityName;
+                    button.dataset.entity = entityName;
+                    button.onclick = () => this.selectEntity(entityName);
+                    listEl.appendChild(button);
                 });
-            }
+                document.getElementById('viewer-prompt').style.display = entities.length > 0 ? 'none' : 'block';
+            },
 
-            const simplifiedRepos = allRepos.map(repo => this.CACHE_KEYS.reduce((obj, key) => ({ ...obj, [key]: repo[key] }), {}));
-            this.setCache(entityName, { entity: entityName, fetchedAt: new Date().toISOString(), repos: simplifiedRepos });
-            this.setStatus(`Fetched ${simplifiedRepos.length} repos. Now fetching release information...`, 'success', 'full-fetch-status');
-            await this.fetchReleasesForEntity(entityName);
-            this.setStatus(`Success! Fetched ${simplifiedRepos.length} repos with release information for "${entityName}".`, 'success', 'full-fetch-status');
-            this.populateEntityList();
-            this.selectEntity(entityName);
-            this.changeTab('viewer');
-        } catch (error) { this.setStatus(`Error: ${error.message}`, 'error', 'full-fetch-status'); } 
-        finally { fetchButton.disabled = false; }
-    },
+            async autoSelectEntity() {
+                const lastSelected = sessionStorage.getItem('selectedEntity');
+                const allEntities = await this.getAllCachedEntities();
 
-    async update(entityToUpdate = null) {
-        const entity = entityToUpdate || this.state.currentEntity;
-        if (!entity) return;
-        const button = document.getElementById('updateButton');
-        if (button && !entityToUpdate) button.disabled = true;
-        this.setStatus(`Checking for updates for "${entity}"...`, 'info');
-        try {
-            const cachedData = this.getCache(entity);
-            if (!cachedData) throw new Error("No cache found to update.");
-            const latestCachedUpdate = cachedData.repos.reduce((latest, repo) => repo.updated_at > latest ? repo.updated_at : latest, '');
-            const userCheck = await this._fetch(`https://api.github.com/users/${entity}`);
-            const entityType = (await userCheck.json()).type === 'Organization' ? 'orgs' : 'users';
-            let recentRepos = [], page = 1, keepFetching = true;
-            while (keepFetching) {
-                this.setStatus(`Updating "${entity}": Fetching page ${page}...`, 'info');
-                const res = await this._fetch(`https://api.github.com/${entityType}/${entity}/repos?per_page=100&page=${page}&sort=updated`);
-                const pageRepos = await res.json();
-                if (pageRepos.length === 0) { keepFetching = false; continue; }
-                const lastRepoOnPage = pageRepos[pageRepos.length - 1];
-                if (new Date(lastRepoOnPage.updated_at) < new Date(latestCachedUpdate)) keepFetching = false;
-                recentRepos.push(...pageRepos.filter(r => new Date(r.updated_at) > new Date(latestCachedUpdate)));
-                page++;
-            }
+                if (lastSelected && allEntities.includes(lastSelected)) {
+                    await this.selectEntity(lastSelected);
+                    return;
+                }
 
-            if (recentRepos.length > 0) {
-                const repoMap = new Map(cachedData.repos.map(repo => [repo.name, repo]));
-                let newCount = 0, updatedCount = 0;
-                recentRepos.forEach(repo => {
-                    const existingRepo = repoMap.get(repo.name);
-                    const hasExe = existingRepo ? existingRepo.has_exe : undefined;
-                    const hasReleases = existingRepo ? existingRepo.has_releases : undefined;
-                    repoMap.has(repo.name) ? updatedCount++ : newCount++;
-                    repoMap.set(repo.name, {
-                        ...this.CACHE_KEYS.reduce((obj, key) => ({ ...obj, [key]: repo[key] }), {}),
-                        has_exe: hasExe, // Preserve existing release info
-                        has_releases: hasReleases
-                    });
+                const entityItems = await Promise.all(
+                    allEntities.map(async name => ({ name, cache: await this.getCache(name) }))
+                );
+
+                const sortedEntities = entityItems
+                    .filter(item => item.cache && item.cache.fetchedAt)
+                    .sort((a, b) => new Date(b.cache.fetchedAt) - new Date(a.cache.fetchedAt));
+
+                if (sortedEntities.length > 0) {
+                    await this.selectEntity(sortedEntities[0].name);
+                }
+            },
+
+            async selectEntity(entity) {
+                if (entity) {
+                    sessionStorage.setItem('selectedEntity', entity);
+                } else {
+                    sessionStorage.removeItem('selectedEntity');
+                }
+
+                this.state.currentEntity = entity;
+                this.state.releaseInfo = {};
+                document.querySelectorAll('#entityList .entity-item').forEach(item => {
+                    item.classList.toggle('active', item.dataset.entity === entity);
                 });
-                cachedData.repos = Array.from(repoMap.values());
-                cachedData.fetchedAt = new Date().toISOString();
-                this.setCache(entity, cachedData);
-                this.setStatus(`Update for "${entity}" complete! Found ${newCount} new and ${updatedCount} updated repos.`, 'success');
-            } else {
-                this.setStatus(`Cache for "${entity}" is already up to date.`, 'success');
-            }
+                const resultsContainer = document.getElementById('results-container');
+                const prompt = document.getElementById('viewer-prompt');
+                if (!entity) { resultsContainer.style.display = 'none'; prompt.style.display = 'block'; return; }
 
-            // Check if we need to fetch release info
-            const shouldFetchReleases = recentRepos.length > 0 || // Any new/updated repos
-                !cachedData.releasesCheckedAt || // Never checked releases
-                cachedData.repos.some(repo => repo.has_exe === undefined || repo.has_exe === null); // Missing release data
+                prompt.style.display = 'none';
+                const cachedData = await this.getCache(entity);
+                if (cachedData && cachedData.repos) {
+                    this.state.allRepos = cachedData.repos;
+                    document.getElementById('currentEntityName').textContent = entity;
+                    this.setStatus(`Displaying ${cachedData.repos.length} cached repos. Last updated: ${new Date(cachedData.fetchedAt).toLocaleString()}`, 'success');
+                    document.getElementById('nameFilter').value = '';
+                    document.getElementById('descriptionFilter').value = '';
+                    this.state.languages.selected.clear();
+                    this.buildLanguageFilter();
+                    this.applyFilters();
+                    resultsContainer.style.display = 'block';
+                } else {
+                    resultsContainer.style.display = 'none';
+                    this.setStatus(`No cache found for "${entity}". Use the Full Fetch tool.`, 'error');
+                }
+            },
 
-            if (shouldFetchReleases) {
-                this.setStatus(`Fetching release information...`, 'info');
-                await this.fetchReleasesForEntity(entity);
-            }
+            async deleteData() {
+                const entity = this.state.currentEntity;
+                if (!entity || !confirm(`Are you sure you want to delete all cached data for "${entity}"?`)) return;
+                await DB.delete(DB.STORES.ENTITIES, entity);
+                await this.populateEntityList();
+                await this.selectEntity(null);
+                document.getElementById('results-container').style.display = 'none';
+                document.getElementById('viewer-prompt').style.display = 'block';
+            },
 
-            // Always refresh the display if this is the current entity
-            if (entity === this.state.currentEntity) {
-                this.selectEntity(entity);
-            }
+            async exportData() {
+                const entity = this.state.currentEntity;
+                if (!entity) return;
+                const data = await this.getCache(entity);
+                if (!data) return;
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `${entity}_repo_cache.json`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+            },
 
-        } catch (error) {
-            this.setStatus(`Update for "${entity}" failed: ${error.message}`, 'error');
-        } finally {
-            if (button && !entityToUpdate) button.disabled = false;
-        }
-    },
+            importData(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        if (!data.entity || !data.repos || !data.fetchedAt) throw new Error("Invalid cache file format.");
+                        await this.setCache(data.entity, data);
+                        await this.populateEntityList();
+                        await this.selectEntity(data.entity);
+                    } catch (err) { this.setStatus(`Import failed: ${err.message}`, 'error'); }
+                    finally { event.target.value = ''; }
+                };
+                reader.readAsText(file);
+            },
 
-    async fetchReleasesForEntity(entityName) {
-        if (!entityName) {
-            // Print to console error
-            console.error("No entity name provided for fetching releases.");
-            return;
-        }
-            
-        const cachedData = this.getCache(entityName);
-        if (!cachedData || !cachedData.repos) return;
+            // --- GITHUB API FETCHING ---
+            async _fetch(url, options = {}) {
+                const newApiKey = document.getElementById('apiKey').value.trim();
+                if (newApiKey !== this.state.apiKey) {
+                    this.state.apiKey = newApiKey;
+                    await DB.set(DB.STORES.CONFIG, { key: 'githubApiKey', value: this.state.apiKey });
+                }
 
-        try {
-            // Check if entity is user or org
-            const userCheck = await this._fetch(`https://api.github.com/users/${entityName}`);
-            const entityType = (await userCheck.json()).type === 'Organization' ? 'organization' : 'user';
+                if (this.state.apiKey) {
+                    options.headers = { ...options.headers, 'Authorization': `token ${this.state.apiKey}` };
+                }
+                const response = await fetch(url, options);
+                if (response.status === 403) {
+                    const resetDate = new Date(response.headers.get('X-RateLimit-Reset') * 1000);
+                    throw new Error(`API rate limit exceeded. Resets at ${resetDate.toLocaleTimeString()}.`);
+                }
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`API Error: ${response.status} - ${errorData.message}`);
+                }
+                return response;
+            },
 
-            // Show initial status if this is the current entity
-            if (entityName === this.state.currentEntity) {
-                this.setStatus(`Fetching release information for ${cachedData.repos.length} repositories...`, 'info');
-            }
+            async fullFetch() {
+                const userInput = document.getElementById('repoUrl').value.trim();
+                const fetchButton = document.getElementById('fetchButton');
+                fetchButton.disabled = true;
+                this.setStatus('Starting full fetch...', 'info', 'full-fetch-status');
+                let entityName, entityType;
 
-            const query = `
-                query GetRepositoriesWithReleases($username: String!, $cursor: String) {
-                    ${entityType}(login: $username) {
-                        repositories(first: 100, after: $cursor) {
-                            pageInfo {
-                                endCursor
-                                hasNextPage
-                            }
-                            nodes {
-                                name
-                                latestRelease {
-                                    releaseAssets(first: 25) {
+                try {
+                    entityName = userInput.includes('github.com') ? new URL(userInput).pathname.split('/')[1] : userInput.replace(/[^a-zA-Z0-9-]/g, '');
+                    if (!entityName) throw new Error("Invalid user/org name.");
+
+                    const userCheck = await this._fetch(`https://api.github.com/users/${entityName}`);
+                    entityType = (await userCheck.json()).type === 'Organization' ? 'orgs' : 'users';
+
+                    const initialUrl = `https://api.github.com/${entityType}/${entityName}/repos?per_page=100&page=1&sort=full_name`;
+                    this.setStatus('Fetching page 1 to determine total pages...', 'info', 'full-fetch-status');
+                    const initialResponse = await this._fetch(initialUrl);
+                    let allRepos = await initialResponse.json();
+
+                    const linkHeader = initialResponse.headers.get('Link');
+                    let lastPage = 1;
+                    if (linkHeader) {
+                        const lastLink = linkHeader.split(',').find(s => s.includes('rel="last"'));
+                        if (lastLink) lastPage = parseInt(new URL(lastLink.match(/<(.+)>/)[1]).searchParams.get('page'));
+                    }
+
+                    if (lastPage > 1) {
+                        const pagePromises = [];
+                        for (let i = 2; i <= lastPage; i++) {
+                            const pageUrl = `https://api.github.com/${entityType}/${entityName}/repos?per_page=100&page=${i}&sort=full_name`;
+                            pagePromises.push(this._fetch(pageUrl).then(res => res.json()));
+                        }
+                        this.setStatus(`Fetching pages 2 to ${lastPage} in parallel...`, 'info', 'full-fetch-status');
+                        const settledResponses = await Promise.allSettled(pagePromises);
+                        settledResponses.forEach(res => {
+                            if (res.status === 'fulfilled' && res.value) allRepos = allRepos.concat(res.value);
+                        });
+                    }
+
+                    const simplifiedRepos = allRepos.map(repo => this.CACHE_KEYS.reduce((obj, key) => ({ ...obj, [key]: repo[key] }), {}));
+                    await this.setCache(entityName, { entity: entityName, fetchedAt: new Date().toISOString(), repos: simplifiedRepos });
+                    this.setStatus(`Fetched ${simplifiedRepos.length} repos. Now fetching release information...`, 'success', 'full-fetch-status');
+                    await this.fetchReleasesForEntity(entityName);
+                    this.setStatus(`Success! Fetched ${simplifiedRepos.length} repos with release information for "${entityName}".`, 'success', 'full-fetch-status');
+                    await this.populateEntityList();
+                    await this.selectEntity(entityName);
+                    this.changeTab('viewer');
+                } catch (error) { this.setStatus(`Error: ${error.message}`, 'error', 'full-fetch-status'); }
+                finally { fetchButton.disabled = false; }
+            },
+
+            async update(entityToUpdate = null) {
+                const entity = entityToUpdate || this.state.currentEntity;
+                if (!entity) return;
+                const button = document.getElementById('updateButton');
+                if (button && !entityToUpdate) button.disabled = true;
+                this.setStatus(`Checking for updates for "${entity}"...`, 'info');
+                try {
+                    const cachedData = await this.getCache(entity);
+                    if (!cachedData) throw new Error("No cache found to update.");
+                    const latestCachedUpdate = cachedData.repos.reduce((latest, repo) => repo.updated_at > latest ? repo.updated_at : latest, '');
+                    const userCheck = await this._fetch(`https://api.github.com/users/${entity}`);
+                    const entityType = (await userCheck.json()).type === 'Organization' ? 'orgs' : 'users';
+                    let recentRepos = [], page = 1, keepFetching = true;
+                    while (keepFetching) {
+                        this.setStatus(`Updating "${entity}": Fetching page ${page}...`, 'info');
+                        const res = await this._fetch(`https://api.github.com/${entityType}/${entity}/repos?per_page=100&page=${page}&sort=updated`);
+                        const pageRepos = await res.json();
+                        if (pageRepos.length === 0) { keepFetching = false; continue; }
+                        const lastRepoOnPage = pageRepos[pageRepos.length - 1];
+                        if (new Date(lastRepoOnPage.updated_at) < new Date(latestCachedUpdate)) keepFetching = false;
+                        recentRepos.push(...pageRepos.filter(r => new Date(r.updated_at) > new Date(latestCachedUpdate)));
+                        page++;
+                    }
+
+                    if (recentRepos.length > 0) {
+                        const repoMap = new Map(cachedData.repos.map(repo => [repo.name, repo]));
+                        let newCount = 0, updatedCount = 0;
+                        recentRepos.forEach(repo => {
+                            const existingRepo = repoMap.get(repo.name);
+                            const hasExe = existingRepo ? existingRepo.has_exe : undefined;
+                            const hasReleases = existingRepo ? existingRepo.has_releases : undefined;
+                            repoMap.has(repo.name) ? updatedCount++ : newCount++;
+                            repoMap.set(repo.name, {
+                                ...this.CACHE_KEYS.reduce((obj, key) => ({ ...obj, [key]: repo[key] }), {}),
+                                has_exe: hasExe, // Preserve existing release info
+                                has_releases: hasReleases
+                            });
+                        });
+                        cachedData.repos = Array.from(repoMap.values());
+                        cachedData.fetchedAt = new Date().toISOString();
+                        await this.setCache(entity, cachedData);
+                        this.setStatus(`Update for "${entity}" complete! Found ${newCount} new and ${updatedCount} updated repos.`, 'success');
+                    } else {
+                        this.setStatus(`Cache for "${entity}" is already up to date.`, 'success');
+                    }
+
+                    // Check if we need to fetch release info
+                    const shouldFetchReleases = recentRepos.length > 0 || // Any new/updated repos
+                        !cachedData.releasesCheckedAt || // Never checked releases
+                        cachedData.repos.some(repo => repo.has_exe === undefined || repo.has_exe === null); // Missing release data
+
+                    if (shouldFetchReleases) {
+                        this.setStatus(`Fetching release information...`, 'info');
+                        await this.fetchReleasesForEntity(entity);
+                    }
+
+                    // Always refresh the display if this is the current entity
+                    if (entity === this.state.currentEntity) {
+                        await this.selectEntity(entity);
+                    }
+
+                } catch (error) {
+                    this.setStatus(`Update for "${entity}" failed: ${error.message}`, 'error');
+                } finally {
+                    if (button && !entityToUpdate) button.disabled = false;
+                }
+            },
+
+            async fetchReleasesForEntity(entityName) {
+                if (!entityName) {
+                    console.error("No entity name provided for fetching releases.");
+                    return;
+                }
+
+                const cachedData = await this.getCache(entityName);
+                if (!cachedData || !cachedData.repos) return;
+
+                try {
+                    // Check if entity is user or org
+                    const userCheck = await this._fetch(`https://api.github.com/users/${entityName}`);
+                    const entityType = (await userCheck.json()).type === 'Organization' ? 'organization' : 'user';
+
+                    // Show initial status if this is the current entity
+                    if (entityName === this.state.currentEntity) {
+                        this.setStatus(`Fetching release information for ${cachedData.repos.length} repositories...`, 'info');
+                    }
+
+                    const query = `
+                            query GetRepositoriesWithReleases($username: String!, $cursor: String) {
+                                ${entityType}(login: $username) {
+                                    repositories(first: 100, after: $cursor) {
+                                        pageInfo {
+                                            endCursor
+                                            hasNextPage
+                                        }
                                         nodes {
                                             name
-                                            contentType
+                                            latestRelease {
+                                                releaseAssets(first: 25) {
+                                                    nodes {
+                                                        name
+                                                        contentType
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
+                        `;
+
+                    let hasNextPage = true;
+                    let cursor = null;
+                    const releaseInfo = {};
+                    let processedCount = 0;
+
+                    while (hasNextPage) {
+                        const variables = { username: entityName };
+                        if (cursor) variables.cursor = cursor;
+
+                        const response = await this._fetch('https://api.github.com/graphql', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ query, variables })
+                        });
+
+                        const data = await response.json();
+
+                        if (data.errors) {
+                            throw new Error(data.errors.map(e => e.message).join('; '));
                         }
+
+                        if (!data.data || !data.data[entityType] || !data.data[entityType].repositories) {
+                            throw new Error(`Unexpected GraphQL response structure for entity type ${entityType}.`);
+                        }
+                        const repositories = data.data[entityType].repositories;
+
+                        repositories.nodes.forEach(repo => {
+                            if (repo.latestRelease && repo.latestRelease.releaseAssets) {
+                                const hasExe = repo.latestRelease.releaseAssets.nodes.some(asset =>
+                                    asset.name.toLowerCase().endsWith('.exe') ||
+                                    asset.contentType === 'application/x-msdownload' ||
+                                    asset.contentType === 'application/x-msdos-program'
+                                );
+                                releaseInfo[repo.name] = { has_exe: hasExe, has_releases: true };
+                            } else {
+                                releaseInfo[repo.name] = { has_exe: false, has_releases: false };
+                            }
+                        });
+
+                        processedCount += repositories.nodes.length;
+
+                        // Update progress if this is the current entity
+                        if (entityName === this.state.currentEntity) {
+                            this.setStatus(`Fetching release information... (${processedCount}/${cachedData.repos.length} repos processed)`, 'info');
+                        }
+
+                        hasNextPage = repositories.pageInfo.hasNextPage;
+                        cursor = repositories.pageInfo.endCursor;
+                    }
+
+                    // Update cached data with release info
+                    cachedData.repos = cachedData.repos.map(repo => ({
+                        ...repo,
+                        has_exe: releaseInfo[repo.name] !== undefined ? releaseInfo[repo.name].has_exe : repo.has_exe,
+                        has_releases: releaseInfo[repo.name] !== undefined ? releaseInfo[repo.name].has_releases : repo.has_releases
+                    }));
+                    cachedData.releasesCheckedAt = new Date().toISOString();
+                    await this.setCache(entityName, cachedData);
+
+                    // If this is the current entity, refresh the display and show completion
+                    if (entityName === this.state.currentEntity) {
+                        this.state.allRepos = cachedData.repos;
+                        this.applyFilters();
+                        this.setStatus(`Release information fetched for all ${processedCount} repositories.`, 'success');
+                    }
+
+                } catch (error) {
+                    console.error(`Failed to fetch releases for ${entityName}:`, error);
+                    if (entityName === this.state.currentEntity) {
+                        this.setStatus(`Failed to fetch release info: ${error.message}`, 'error');
                     }
                 }
-            `;
+            },
 
-            let hasNextPage = true;
-            let cursor = null;
-            const releaseInfo = {};
-            let processedCount = 0;
+            async fetchReleases() {
+                await this.fetchReleasesForEntity(this.state.currentEntity);
+            },
 
-            while (hasNextPage) {
-                const variables = { username: entityName };
-                if (cursor) variables.cursor = cursor;
+            async updateAll() {
+                const allEntities = await this.getAllCachedEntities();
+                for (const entity of allEntities) { await this.update(entity); }
+                this.setStatus('Finished updating all cached users.', 'success');
+            },
 
-                const response = await this._fetch('https://api.github.com/graphql', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query, variables })
-                });
-
-                const data = await response.json();
-
-                if (data.errors) {
-                    throw new Error(data.errors.map(e => e.message).join('; '));
-                }
-
-                if (!data.data || !data.data[entityType] || !data.data[entityType].repositories) {
-                    throw new Error(`Unexpected GraphQL response structure for entity type ${entityType}.`);
-                }
-                const repositories = data.data[entityType].repositories;
-
-                repositories.nodes.forEach(repo => {
-                    if (repo.latestRelease && repo.latestRelease.releaseAssets) {
-                        const hasExe = repo.latestRelease.releaseAssets.nodes.some(asset =>
-                            asset.name.toLowerCase().endsWith('.exe') ||
-                            asset.contentType === 'application/x-msdownload' ||
-                            asset.contentType === 'application/x-msdos-program'
-                        );
-                        releaseInfo[repo.name] = { has_exe: hasExe, has_releases: true };
-                    } else {
-                        releaseInfo[repo.name] = { has_exe: false, has_releases: false };
+            // --- TABLE RENDERING, SORTING, FILTERING ---
+            renderTable() {
+                const tbody = document.getElementById('repoTableBody');
+                tbody.innerHTML = '';
+                document.querySelectorAll('th .sort-indicator').forEach(el => el.textContent = '');
+                const activeTh = document.querySelector(`th[onclick="App.setSort('${this.state.sortBy}')"]`);
+                if (activeTh) activeTh.querySelector('.sort-indicator').textContent = this.state.sortDir === 'asc' ? '▲' : '▼';
+                if (this.state.filteredRepos.length === 0) { tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">No repositories match filters.</td></tr>'; return; }
+                const fragment = document.createDocumentFragment();
+                for (const repo of this.state.filteredRepos) {
+                    const tr = document.createElement('tr');
+                    let releaseCell = '<td class="no-exe">—</td>';
+                    if (repo.has_releases === true && repo.has_exe === true) {
+                        releaseCell = '<td class="has-exe" title="Has releases with .exe">Yes (.exe)</td>';
+                    } else if (repo.has_releases === true) {
+                        releaseCell = '<td class="has-exe" title="Has releases but no .exe">Yes</td>';
+                    } else if (repo.has_releases === false) {
+                        releaseCell = '<td class="no-exe">No</td>';
                     }
-                });
-
-                processedCount += repositories.nodes.length;
-
-                // Update progress if this is the current entity
-                if (entityName === this.state.currentEntity) {
-                    this.setStatus(`Fetching release information... (${processedCount}/${cachedData.repos.length} repos processed)`, 'info');
+                    tr.innerHTML = `
+                            <td><a href="${repo.html_url}" target="_blank" rel="noopener noreferrer" title="${repo.name}">${repo.name}</a></td>
+                            <td>${repo.stargazers_count.toLocaleString()}</td>
+                            <td>${repo.language || 'N/A'}</td>
+                            <td>${new Date(repo.created_at).toLocaleDateString()}</td>
+                            <td>${new Date(repo.updated_at).toLocaleDateString()}</td>
+                            <td>${new Date(repo.pushed_at).toLocaleDateString()}</td>
+                            ${releaseCell}
+                            <td title="${repo.description || ''}">${repo.description || ''}</td>`;
+                    fragment.appendChild(tr);
                 }
-
-                hasNextPage = repositories.pageInfo.hasNextPage;
-                cursor = repositories.pageInfo.endCursor;
-            }
-
-            // Update cached data with release info
-            cachedData.repos = cachedData.repos.map(repo => ({
-                ...repo,
-                has_exe: releaseInfo[repo.name] !== undefined ? releaseInfo[repo.name].has_exe : repo.has_exe,
-                has_releases: releaseInfo[repo.name] !== undefined ? releaseInfo[repo.name].has_releases : repo.has_releases
-            }));
-            cachedData.releasesCheckedAt = new Date().toISOString();
-            this.setCache(entityName, cachedData);
-
-            // If this is the current entity, refresh the display and show completion
-            if (entityName === this.state.currentEntity) {
-                this.state.allRepos = cachedData.repos;
+                tbody.appendChild(fragment);
+            },
+            setSort(column) {
+                if (this.state.isResizing) return;
+                this.state.sortDir = (this.state.sortBy === column && this.state.sortDir === 'desc') ? 'asc' : 'desc';
+                this.state.sortBy = column;
                 this.applyFilters();
-                this.setStatus(`Release information fetched for all ${processedCount} repositories.`, 'success');
-            }
+            },
+            _sortData(data) {
+                const { sortBy, sortDir } = this.state;
+                const dir = sortDir === 'asc' ? 1 : -1;
+                return [...data].sort((a, b) => {
+                    let valA = a[sortBy], valB = b[sortBy];
 
-        } catch (error) {
-            console.error(`Failed to fetch releases for ${entityName}:`, error);
-            if (entityName === this.state.currentEntity) {
-                this.setStatus(`Failed to fetch release info: ${error.message}`, 'error');
-            }
-        }
-    },
+                    // Special handling for has_exe column
+                    if (sortBy === 'has_releases') {
+                        // Convert to numeric for better sorting: Yes with .exe (2), Yes (1), No (0), undefined (-1)
+                        const getVal = (repo) => {
+                            if (repo.has_releases === true && repo.has_exe === true) 
+                                return 2;
+                            if (repo.has_releases === true) 
+                                return 1;
+                            if (repo.has_releases === false) 
+                                return 0;
+                            
+                            return -1;
+                        };
+                        valA = getVal(a);
+                        valB = getVal(b);
+                    } else if (typeof valA === 'string' && sortBy.endsWith('_at')) {
+                        valA = new Date(valA);
+                        valB = new Date(valB);
+                    } else if (typeof valA === 'string') {
+                        valA = (valA || '').toLowerCase();
+                        valB = (valB || '').toLowerCase();
+                    } else if (valA === null || valA === undefined) valA = -Infinity;
 
-    async fetchReleases() {
-        await this.fetchReleasesForEntity(this.state.currentEntity);
-    },
+                    if (valB === null || valB === undefined) valB = -Infinity;
+                    return (valA < valB ? -1 : (valA > valB ? 1 : 0)) * dir;
+                });
+            },
+            applyFilters() {
+                const nameFilter = document.getElementById('nameFilter').value.toLowerCase();
+                const descFilter = document.getElementById('descriptionFilter').value.toLowerCase();
+                const releaseFilter = document.getElementById('releaseFilter').value;
+                const selectedLangs = this.state.languages.selected;
 
-    async updateAll() {
-        const allEntities = this.getAllCachedEntities();
-        for (const entity of allEntities) { await this.update(entity); }
-        this.setStatus('Finished updating all cached users.', 'success');
-    },
+                this.state.filteredRepos = this._sortData(this.state.allRepos.filter(repo => {
+                    const nameMatch = !nameFilter || (repo.name && repo.name.toLowerCase().includes(nameFilter));
+                    const descMatch = !descFilter || (repo.description && repo.description.toLowerCase().includes(descFilter));
+                    const langMatch = selectedLangs.size === 0 || selectedLangs.has(repo.language || 'N/A');
 
-    // --- TABLE RENDERING, SORTING, FILTERING ---
-    renderTable() {
-        const tbody = document.getElementById('repoTableBody');
-        tbody.innerHTML = '';
-        document.querySelectorAll('th .sort-indicator').forEach(el => el.textContent = '');
-        const activeTh = document.querySelector(`th[onclick="App.setSort('${this.state.sortBy}')"]`);
-        if (activeTh) activeTh.querySelector('.sort-indicator').textContent = this.state.sortDir === 'asc' ? '▲' : '▼';
-        if (this.state.filteredRepos.length === 0) { tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">No repositories match filters.</td></tr>'; return; }
-        const fragment = document.createDocumentFragment();
-        for (const repo of this.state.filteredRepos) {
-            const tr = document.createElement('tr');
-            let releaseCell = '<td class="no-exe">—</td>';
-            if (repo.has_releases === true && repo.has_exe === true) {
-                releaseCell = '<td class="has-exe" title="Has releases with .exe">Yes (.exe)</td>';
-            } else if (repo.has_releases === true) {
-                releaseCell = '<td class="has-exe" title="Has releases but no .exe">Yes</td>';
-            } else if (repo.has_releases === false) {
-                releaseCell = '<td class="no-exe">No</td>';
-            }
-            tr.innerHTML = `
-                <td><a href="${repo.html_url}" target="_blank" rel="noopener noreferrer" title="${repo.name}">${repo.name}</a></td>
-                <td>${repo.stargazers_count.toLocaleString()}</td>
-                <td>${repo.language || 'N/A'}</td>
-                <td>${new Date(repo.created_at).toLocaleDateString()}</td>
-                <td>${new Date(repo.updated_at).toLocaleDateString()}</td>
-                <td>${new Date(repo.pushed_at).toLocaleDateString()}</td>
-                ${releaseCell}
-                <td title="${repo.description || ''}">${repo.description || ''}</td>`;
-            fragment.appendChild(tr);
-        }
-        tbody.appendChild(fragment);
-    },
-    setSort(column) {
-        if (this.state.isResizing) return;
-        this.state.sortDir = (this.state.sortBy === column && this.state.sortDir === 'desc') ? 'asc' : 'desc';
-        this.state.sortBy = column;
-        this.applyFilters();
-    },
-    _sortData(data) {
-        const { sortBy, sortDir } = this.state;
-        const dir = sortDir === 'asc' ? 1 : -1;
-        return [...data].sort((a, b) => {
-            let valA = a[sortBy], valB = b[sortBy];
+                    let releaseMatch = true;
+                    if (releaseFilter === 'has_any') {
+                        releaseMatch = repo.has_releases === true;
+                    } else if (releaseFilter === 'has_exe') {
+                        releaseMatch = repo.has_exe === true;
+                    } else if (releaseFilter === 'no_releases') {
+                        releaseMatch = repo.has_releases === false;
+                    }
 
-            // Special handling for has_exe column
-            if (sortBy === 'has_exe') {
-                // Convert to numeric: true = 1, false = 0, undefined = -1
-                valA = valA === true ? 1 : (valA === false ? 0 : -1);
-                valB = valB === true ? 1 : (valB === false ? 0 : -1);
-            } else if (typeof valA === 'string' && sortBy.endsWith('_at')) {
-                valA = new Date(valA);
-                valB = new Date(valB);
-            } else if (typeof valA === 'string') {
-                valA = (valA || '').toLowerCase();
-                valB = (valB || '').toLowerCase();
-            } else if (valA === null || valA === undefined) valA = -Infinity;
+                    return nameMatch && descMatch && langMatch && releaseMatch;
+                }));
+                this.renderTable();
+            },
 
-            if (valB === null || valB === undefined) valB = -Infinity;
-            return (valA < valB ? -1 : (valA > valB ? 1 : 0)) * dir;
-        });
-    },
-    applyFilters() {
-        const nameFilter = document.getElementById('nameFilter').value.toLowerCase();
-        const descFilter = document.getElementById('descriptionFilter').value.toLowerCase();
-        const releaseFilter = document.getElementById('releaseFilter').value;
-        const selectedLangs = this.state.languages.selected;
+            // --- COLUMN FILTERS & RESIZING ---
+            buildLanguageFilter() {
+                this.state.languages.all = new Set([...new Set(this.state.allRepos.map(r => r.language || 'N/A'))].sort());
+                const dropdown = document.getElementById('languageFilterDropdown');
+                dropdown.innerHTML = '';
+                this.state.languages.all.forEach(lang => {
+                    const label = document.createElement('label');
+                    label.innerHTML = `<input type="checkbox" value="${lang}" onchange="App.updateSelectedLanguages()"> ${lang}`;
+                    dropdown.appendChild(document.createElement('div')).appendChild(label);
+                });
+                document.getElementById('languageFilterButton').textContent = 'All Languages';
+            },
+            toggleLanguageFilter() {
+                const dropdown = document.getElementById('languageFilterDropdown');
+                const button = document.getElementById('languageFilterButton');
 
-        this.state.filteredRepos = this._sortData(this.state.allRepos.filter(repo => {
-            const nameMatch = !nameFilter || (repo.name && repo.name.toLowerCase().includes(nameFilter));
-            const descMatch = !descFilter || (repo.description && repo.description.toLowerCase().includes(descFilter));
-            const langMatch = selectedLangs.size === 0 || selectedLangs.has(repo.language || 'N/A');
+                if (dropdown.style.display === 'block') {
+                    dropdown.style.display = 'none';
+                } else {
+                    const rect = button.getBoundingClientRect();
+                    dropdown.style.left = `${rect.left}px`;
+                    dropdown.style.top = `${rect.bottom + 2}px`; // +2 for a small gap
+                    dropdown.style.width = `${rect.width}px`;
+                    dropdown.style.display = 'block';
+                }
+            },
+            updateSelectedLanguages() {
+                const selected = new Set();
+                document.querySelectorAll('#languageFilterDropdown input:checked').forEach(cb => selected.add(cb.value));
+                this.state.languages.selected = selected;
+                document.getElementById('languageFilterButton').textContent = selected.size > 0 ? `${selected.size} selected` : 'All Languages';
+                this.applyFilters();
+            },
+            initResizableColumns() {
+                const table = document.getElementById('repoTable');
+                const headers = table.querySelectorAll('thead tr:first-child th');
 
-            let releaseMatch = true;
-            if (releaseFilter === 'has_any') {
-                releaseMatch = repo.has_releases === true;
-            } else if (releaseFilter === 'has_exe') {
-                releaseMatch = repo.has_exe === true;
-            } else if (releaseFilter === 'no_releases') {
-                releaseMatch = repo.has_releases === false;
-            }
+                headers.forEach((header, index) => {
+                    // Prevent adding handle to non-resizable columns if any
+                    if (header.classList.contains('no-resize')) return;
 
-            return nameMatch && descMatch && langMatch && releaseMatch;
-        }));
-        this.renderTable();
-    },
+                    const handle = document.createElement('div');
+                    handle.className = 'resize-handle';
+                    header.appendChild(handle);
 
-    // --- COLUMN FILTERS & RESIZING ---
-    buildLanguageFilter() {
-        this.state.languages.all = new Set([...new Set(this.state.allRepos.map(r => r.language || 'N/A'))].sort());
-        const dropdown = document.getElementById('languageFilterDropdown');
-        dropdown.innerHTML = '';
-        this.state.languages.all.forEach(lang => {
-            const label = document.createElement('label');
-            label.innerHTML = `<input type="checkbox" value="${lang}" onchange="App.updateSelectedLanguages()"> ${lang}`;
-            dropdown.appendChild(document.createElement('div')).appendChild(label);
-        });
-        document.getElementById('languageFilterButton').textContent = 'All Languages';
-    },
-    toggleLanguageFilter() {
-        const dropdown = document.getElementById('languageFilterDropdown');
-        const button = document.getElementById('languageFilterButton');
-        
-        if (dropdown.style.display === 'block') {
-            dropdown.style.display = 'none';
-        } else {
-            const rect = button.getBoundingClientRect();
-            dropdown.style.left = `${rect.left}px`;
-            dropdown.style.top = `${rect.bottom + 2}px`; // +2 for a small gap
-            dropdown.style.width = `${rect.width}px`;
-            dropdown.style.display = 'block';
-        }
-    },
-    updateSelectedLanguages() {
-        const selected = new Set();
-        document.querySelectorAll('#languageFilterDropdown input:checked').forEach(cb => selected.add(cb.value));
-        this.state.languages.selected = selected;
-        document.getElementById('languageFilterButton').textContent = selected.size > 0 ? `${selected.size} selected` : 'All Languages';
-        this.applyFilters();
-    },
-    // FIXED: Complete rewrite of column resizing logic
-    initResizableColumns() {
-        const table = document.getElementById('repoTable');
-        const headers = table.querySelectorAll('thead tr:first-child th');
-        
-        // Store original widths
-        const columnWidths = [];
-        headers.forEach((header, index) => {
-            columnWidths[index] = header.offsetWidth;
-        });
+                    handle.addEventListener('mousedown', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        this.state.isResizing = true;
 
-        headers.forEach((header, index) => {
-            const handle = document.createElement('div');
-            handle.className = 'resize-handle';
-            header.appendChild(handle);
+                        const startX = e.pageX;
+                        const startWidth = header.offsetWidth;
 
-            handle.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                this.state.isResizing = true;
+                        const mouseMoveHandler = (moveEvent) => {
+                            const deltaX = moveEvent.pageX - startX;
+                            const newWidth = Math.max(50, startWidth + deltaX); // Minimum 50px
+                            header.style.width = `${newWidth}px`;
+                        };
 
-                const startX = e.pageX;
-                const startWidth = header.offsetWidth;
-                const tableStartWidth = table.offsetWidth;
-                
-                // Get all column widths at start
-                const startWidths = [];
-                headers.forEach((h, i) => {
-                    startWidths[i] = h.offsetWidth;
+                        const mouseUpHandler = () => {
+                            document.removeEventListener('mousemove', mouseMoveHandler);
+                            document.removeEventListener('mouseup', mouseUpHandler);
+
+                            // Use a timeout to prevent the sort click from firing immediately after resize
+                            setTimeout(() => { this.state.isResizing = false; }, 100);
+                        };
+
+                        document.addEventListener('mousemove', mouseMoveHandler);
+                        document.addEventListener('mouseup', mouseUpHandler);
+                    });
                 });
 
-                const mouseMoveHandler = (moveEvent) => {
-                    const deltaX = moveEvent.pageX - startX;
-                    const newWidth = Math.max(50, startWidth + deltaX); // Minimum 50px
-                    
-                    // Set the width of the column being resized
-                    header.style.width = `${newWidth}px`;
-                    
-                    // Calculate new table width (original width + delta)
-                    const newTableWidth = tableStartWidth + deltaX;
-                    
-                    // Set explicit widths for ALL columns to prevent auto-adjustment
-                    headers.forEach((h, i) => {
-                        if (i !== index) {
-                            // Keep other columns at their original size
-                            h.style.width = `${startWidths[i]}px`;
-                        }
-                    });
-                    
-                    // Force the table to be at least as wide as the sum of columns
-                    let totalWidth = 0;
-                    headers.forEach(h => {
-                        totalWidth += parseInt(h.style.width) || h.offsetWidth;
-                    });
-                    table.style.minWidth = `${totalWidth}px`;
-                };
-
-                const mouseUpHandler = () => {
-                    document.removeEventListener('mousemove', mouseMoveHandler);
-                    document.removeEventListener('mouseup', mouseUpHandler);
-                    
-                    // Update stored widths
-                    headers.forEach((h, i) => {
-                        columnWidths[i] = h.offsetWidth;
-                    });
-                    
-                    // Use a timeout to prevent the sort click from firing immediately after resize
-                    setTimeout(() => { this.state.isResizing = false; }, 100);
-                };
-
-                document.addEventListener('mousemove', mouseMoveHandler);
-                document.addEventListener('mouseup', mouseUpHandler);
-            });
+                // Set table layout to fixed after initial render to allow resizing
+                table.style.tableLayout = 'fixed';
+            }
+        };
+        App.init().catch(err => {
+            console.error("App initialization failed:", err);
+            // Optionally display an error to the user
+            const status = document.getElementById('status') || document.getElementById('full-fetch-status');
+            if (status) {
+                status.textContent = 'Critical Error: Could not initialize database. Please check browser permissions.';
+                status.className = 'error';
+            }
         });
-    }
-};
-App.init();
-</script>
+    </script>
 </body>
 </html>
