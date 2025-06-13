@@ -354,7 +354,7 @@
 
 
 <script>
-// --- DOM Elements ---
+    // --- DOM Elements ---
     const searchQueryEl = document.getElementById('searchQuery');
     const githubTokenEl = document.getElementById('githubToken');
     const parentOrgQueryEl = document.getElementById('parentOrgQuery');
@@ -396,41 +396,131 @@
     // --- State Management ---
     let allResults = [];
     let currentSort = { column: 'isVerified', direction: 'desc' };
-    let searchHistory = {};
+    let searchHistory = {}; // In-memory representation of keys for the UI
     let currentCacheKey = null;
     let abortController = new AbortController();
+    let globalMembersCache = {}; // In-memory cache for the current session
 
-    let globalMembersCache = {};
-    function saveGlobalMembersCache() {
-        localStorage.setItem('githubOrgMembers', JSON.stringify(globalMembersCache));
+    // --- IndexedDB Caching Implementation ---
+    const DB_NAME = 'GitHubOrgResearchDB';
+    const DB_VERSION = 1;
+    const STORES = {
+        search: 'searchCache',
+        members: 'membersCache'
+    };
+    let db;
+
+    function openDB() {
+        return new Promise((resolve, reject) => {
+            if (db) return resolve(db);
+
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+            request.onupgradeneeded = event => {
+                const dbInstance = event.target.result;
+                if (!dbInstance.objectStoreNames.contains(STORES.search)) {
+                    dbInstance.createObjectStore(STORES.search); // key is the search string
+                }
+                if (!dbInstance.objectStoreNames.contains(STORES.members)) {
+                    dbInstance.createObjectStore(STORES.members); // key is the org login
+                }
+            };
+
+            request.onsuccess = event => {
+                db = event.target.result;
+                resolve(db);
+            };
+
+            request.onerror = event => {
+                console.error('IndexedDB error:', event.target.error);
+                reject(event.target.error);
+            };
+        });
     }
-    
+
+    const idb = {
+        get: (storeName, key) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const request = store.get(key);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        }),
+        set: (storeName, key, value) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            const request = store.put(value, key);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        }),
+        delete: (storeName, key) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            const request = store.delete(key);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        }),
+        clear: (storeName) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            const request = store.clear();
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        }),
+        getAllKeys: (storeName) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const request = store.getAllKeys();
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        }),
+        getAllWithKeys: (storeName) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const request = store.openCursor();
+            const items = {};
+            request.onsuccess = event => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    items[cursor.key] = cursor.value;
+                    cursor.continue();
+                } else {
+                    resolve(items);
+                }
+            };
+            request.onerror = () => reject(request.error);
+        }),
+    };
+
     // --- On Page Load ---
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
         const cachedToken = localStorage.getItem('githubToken');
         if (cachedToken) githubTokenEl.value = cachedToken;
 
-        const cachedHistory = localStorage.getItem('githubSearchHistory');
-        if (cachedHistory) {
-            try {
-                searchHistory = JSON.parse(cachedHistory);
-                renderHistory();
-            } catch (e) {
-                console.error("Failed to parse cache:", e);
-                localStorage.removeItem('githubSearchHistory');
-            }
+        try {
+            await openDB(); // Initialize DB connection
+            const historyKeys = await idb.getAllKeys(STORES.search);
+            searchHistory = {};
+            historyKeys.forEach(key => {
+                searchHistory[key] = {}; // Populate with placeholders for renderHistory
+            });
+            renderHistory();
+
+            globalMembersCache = await idb.getAllWithKeys(STORES.members);
+        } catch (e) {
+            console.error("Failed to initialize IndexedDB cache:", e);
+            alert("Could not initialize the local database. Caching will not work.");
         }
-        
-        // Link parent org input to search term input
+
         parentOrgQueryEl.addEventListener('input', (e) => {
             searchQueryEl.value = e.target.value;
         });
-
-        const storedMembers = localStorage.getItem('githubOrgMembers');
-        if (storedMembers) {
-            try { globalMembersCache = JSON.parse(storedMembers); }
-            catch { localStorage.removeItem('githubOrgMembers'); }
-        }
 
         document.getElementById('refreshCacheBtn').addEventListener('click', async () => {
             if (!confirm('Refresh all organisation-member lists now?')) return;
@@ -450,15 +540,14 @@
                 ? `${updates} organisation cache${updates > 1 ? 's were' : ' was'} updated.`
                 : 'All organisation caches are already up-to-date.');
         });
-
     });
 
     /* ------------------------------------------------------------------ *
     *  Tiny concurrency-pool for REST requests (GraphQL stays serial!)   *
     * ------------------------------------------------------------------ */
-    const MAX_CONCURRENT_REST_REQUESTS = 5;          // tune as desired
-    let   activeRestRequests           = 0;
-    const restQueue                    = [];
+    const MAX_CONCURRENT_REST_REQUESTS = 5;
+    let activeRestRequests = 0;
+    const restQueue = [];
 
     function enqueueRest(fn) {
         return new Promise((resolve, reject) => {
@@ -473,71 +562,64 @@
         const { fn, resolve, reject } = restQueue.shift();
         activeRestRequests++;
         fn()
-        .then(resolve)
-        .catch(reject)
-        .finally(() => {
-            activeRestRequests--;
-            processRestQueue();
-        });
+            .then(resolve)
+            .catch(reject)
+            .finally(() => {
+                activeRestRequests--;
+                processRestQueue();
+            });
     }
 
-    /* A thin wrapper so the rest of the code can keep calling “smartFetch*”. */
     async function smartFetchREST(url, options, stage) {
         return enqueueRest(() => smartFetch(url, options, stage));
     }
 
-
     // --- GraphQL Query ---
     const GQL_QUERY = `
-      query SearchOrganizations($queryString: String!, $cursor: String) {
-        search(query: $queryString, type: USER, first: 100, after: $cursor) {
-          userCount
-          pageInfo { endCursor, hasNextPage }
-          nodes { 
-            ... on Organization {
-              id
-              name
-              login
-              isVerified
-              email
-              url
-              websiteUrl
-              membersWithRole(first: 20) {
-                totalCount
-                nodes {
+          query SearchOrganizations($queryString: String!, $cursor: String) {
+            search(query: $queryString, type: USER, first: 100, after: $cursor) {
+              userCount
+              pageInfo { endCursor, hasNextPage }
+              nodes {
+                ... on Organization {
+                  id
+                  name
                   login
+                  isVerified
+                  email
+                  url
+                  websiteUrl
+                  membersWithRole(first: 20) {
+                    totalCount
+                    nodes {
+                      login
+                    }
+                  }
                 }
               }
             }
-          }
-        }
-      }`;
+          }`;
 
     // --- Functions ---
-    function saveCache() {
-        localStorage.setItem('githubSearchHistory', JSON.stringify(searchHistory));
-    }
-
     async function smartFetch(url, options, stage) {
         if (abortController.signal.aborted) throw new DOMException('Search was canceled by the user.', 'AbortError');
-        
+
         const token = githubTokenEl.value;
         const headers = { ...options.headers };
         if (token) headers['Authorization'] = `bearer ${token}`;
-        
+
         let attempt = 0;
         const maxAttempts = 5;
 
         while (attempt < maxAttempts) {
             if (abortController.signal.aborted) throw new DOMException('Search was canceled by the user.', 'AbortError');
-            
+
             const response = await fetch(url, { ...options, headers, signal: abortController.signal });
 
             if (response.ok) {
                 return response;
             }
 
-            // Handle rate limiting
             if (response.status === 403 || response.status === 429) {
                 const retryAfter = response.headers.get('Retry-After');
                 const rateLimitReset = response.headers.get('x-ratelimit-reset');
@@ -549,20 +631,20 @@
                     const resetTime = parseInt(rateLimitReset, 10) * 1000;
                     waitSeconds = Math.max(0, Math.ceil((resetTime - Date.now()) / 1000));
                 }
-                
+
                 if (waitSeconds > 0) {
                     await new Promise(resolve => {
                         let remaining = Math.ceil(waitSeconds);
                         const updateStatus = () => {
-                             loaderStatus.innerHTML = `
-                                <i class="fas fa-pause-circle text-yellow-500 mr-2"></i>
-                                Hit API rate limit and told to wait ${waitSeconds}s. Waiting for ${remaining} seconds... (Stage: ${stage})
-                            `;
+                            loaderStatus.innerHTML = `
+                                    <i class="fas fa-pause-circle text-yellow-500 mr-2"></i>
+                                    Hit API rate limit and told to wait ${waitSeconds}s. Waiting for ${remaining} seconds... (Stage: ${stage})
+                                `;
                         };
                         updateStatus();
 
                         const interval = setInterval(() => {
-                             if (abortController.signal.aborted) {
+                            if (abortController.signal.aborted) {
                                 clearInterval(interval);
                                 resolve(); // Let the abort error be thrown at the top of the loop
                                 return;
@@ -580,7 +662,6 @@
                 }
             }
 
-            // For other non-OK responses
             const errorData = await response.json().catch(() => ({ message: `HTTP Error: ${response.status} ${response.statusText}` }));
             const err = new Error(errorData.message || `API request failed at stage: ${stage}`);
             err.stage = stage;
@@ -598,9 +679,8 @@
         const response = await smartFetch('https://api.github.com/graphql', { method: 'POST', body, headers: { 'Content-Type': 'application/json' } }, 'GraphQL Search');
         return response.json();
     }
-    
+
     async function fetchAllMembersREST(orgLogin, localMemberCache) {
-        // ---------- fast paths ----------
         const globalEntry = globalMembersCache[orgLogin];
 
         if (localMemberCache[orgLogin]) {
@@ -611,33 +691,30 @@
             return new Set(globalEntry.members);
         }
 
-        // ---------- cold fetch ----------
         const { members, etag } = await pullMembersFromGitHub(orgLogin, null);
-        globalMembersCache[orgLogin] = { members, etag };
-        localMemberCache[orgLogin]   = members;
-        saveGlobalMembersCache();
+        const cacheEntry = { members, etag };
+        globalMembersCache[orgLogin] = cacheEntry;
+        localMemberCache[orgLogin] = members;
+        await idb.set(STORES.members, orgLogin, cacheEntry);
         return new Set(members);
     }
 
-    /* Conditional GET helper - Check if anything has been modified and actually needs to fetch */
     async function pullMembersFromGitHub(orgLogin, etag) {
-        const members    = new Set();
-        let   page       = 1;
-        let   storedEtag = null;
+        const members = new Set();
+        let page = 1;
+        let storedEtag = null;
 
         while (true) {
-            const url   = `https://api.github.com/orgs/${orgLogin}/members?per_page=100&page=${page}`;
+            const url = `https://api.github.com/orgs/${orgLogin}/members?per_page=100&page=${page}`;
             const stage = `Refreshing members for ${orgLogin} (page ${page})`;
-            const hdrs  = { 'Accept': 'application/vnd.github.v3+json' };
+            const hdrs = { 'Accept': 'application/vnd.github.v3+json' };
             if (etag && page === 1) hdrs['If-None-Match'] = etag;
 
             let resp;
             try {
-                /* NOTE: we run REST calls through the pool */
                 resp = await smartFetchREST(url, { headers: hdrs }, stage);
             } catch (err) {
                 if (err.status === 304) {
-                    // Nothing changed – propagate that to the caller
                     return { members: null, etag };
                 }
                 throw err; // Other errors bubble up
@@ -653,7 +730,6 @@
             if (data.length < 100) break;     // last page reached
             page++;
 
-            /* tiny breather to stay nice to the API */
             await new Promise(r => setTimeout(r, 50));
         }
 
@@ -669,18 +745,34 @@
         if (members === null) {            // 304 → unchanged
             return false;
         }
-        globalMembersCache[orgLogin] = { members, etag };
-        localMemberCache[orgLogin]   = members;
-        saveGlobalMembersCache();
+        const cacheEntry = { members, etag };
+        globalMembersCache[orgLogin] = cacheEntry;
+        localMemberCache[orgLogin] = members;
+        await idb.set(STORES.members, orgLogin, cacheEntry);
         return true;
     }
-
 
     function extractDomain(urlString) {
         if (!urlString) return null;
         try {
+            // Remove any malformed protocol prefix before the actual URL. In at least one case mailto: was put before a twitter URL
+            // Matches patterns like "mailto:https://", "ftp:http://", etc.
+            urlString = urlString.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:(?=https?:\/\/)/i, '');
+
+            // Just remove any mailto: prefix if it exists still
+            if (urlString.startsWith('mailto:')) {
+                urlString = urlString.substring(7);
+            }
+
             if (urlString.includes('@')) return urlString.split('@')[1];
-            const url = new URL(urlString);
+
+            // Add protocol if missing
+            let normalizedUrl = urlString;
+            if (!urlString.startsWith('http://') && !urlString.startsWith('https://')) {
+                normalizedUrl = 'https://' + urlString;
+            }
+
+            const url = new URL(normalizedUrl);
             let hostname = url.hostname;
             if (hostname.startsWith('www.')) hostname = hostname.substring(4);
             return hostname;
@@ -688,7 +780,7 @@
             return urlString;
         }
     }
-    
+
     async function performMemberChecks(localMemberCache) {
         allResults.forEach(org => org.sharedMembersType = 'none');
         const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
@@ -702,7 +794,6 @@
 
         loaderStatus.textContent = `Comparing members...`;
         allResults.forEach(targetOrg => {
-            // Check only if it's the parent or if data is missing.
             if (targetOrg.login.toLowerCase() === parentLogin || !targetOrg.membersWithRole) {
                 targetOrg.sharedMembersType = 'N/A';
                 return;
@@ -720,9 +811,9 @@
         reEvaluateBtn.disabled = true;
         reEvaluateBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Re-evaluating...';
         const startTime = Date.now();
-        
+
         allResults.forEach(org => {
-            if(org.baseSharedMembersType) {
+            if (org.baseSharedMembersType) {
                 org.sharedMembersType = org.baseSharedMembersType;
             }
         });
@@ -733,21 +824,21 @@
         });
 
         if (selectedDomains.size > 0) {
-            const verifiedAssociatedOrgs = allResults.filter(org => 
-                org.isVerified && 
+            const verifiedAssociatedOrgs = allResults.filter(org =>
+                org.isVerified &&
                 org.publicDomains.some(d => selectedDomains.has(d))
             );
 
             const associatedMembers = new Set();
             for (const assocOrg of verifiedAssociatedOrgs) {
                 if (assocOrg.membersWithRole && assocOrg.membersWithRole.totalCount === 0) {
-                    continue; 
+                    continue;
                 }
                 try {
-                     const members = await fetchAllMembersREST(assocOrg.login, memberCacheForSearch);
-                     members.forEach(m => associatedMembers.add(m));
-                } catch(e) {
-                     console.error(`Could not fetch members for associated org ${assocOrg.login}: ${e.message}. This org will be skipped.`);
+                    const members = await fetchAllMembersREST(assocOrg.login, memberCacheForSearch);
+                    members.forEach(m => associatedMembers.add(m));
+                } catch (e) {
+                    console.error(`Could not fetch members for associated org ${assocOrg.login}: ${e.message}. This org will be skipped.`);
                 }
             }
 
@@ -755,29 +846,32 @@
                 if (targetOrg.sharedMembersType !== 'none') {
                     return;
                 }
-                
+
                 if (verifiedAssociatedOrgs.some(o => o.login === targetOrg.login)) {
                     targetOrg.sharedMembersType = 'N/A';
                     return;
                 }
-                
+
                 const targetMembers = new Set(targetOrg.membersWithRole.nodes.map(m => m.login));
                 const intersection = new Set([...associatedMembers].filter(member => targetMembers.has(member)));
                 if (intersection.size > 0) {
-                     targetOrg.sharedMembersType = 'associated';
+                    targetOrg.sharedMembersType = 'associated';
                 }
             });
         }
-        
-        if (currentCacheKey && searchHistory[currentCacheKey]) {
-            searchHistory[currentCacheKey].selectedDomains = Array.from(selectedDomains);
-            searchHistory[currentCacheKey].results = allResults;
-            searchHistory[currentCacheKey].members = memberCacheForSearch;
-            saveCache();
+
+        if (currentCacheKey) {
+            const cachedItem = await idb.get(STORES.search, currentCacheKey);
+            if (cachedItem) {
+                cachedItem.selectedDomains = Array.from(selectedDomains);
+                cachedItem.results = allResults;
+                cachedItem.members = memberCacheForSearch;
+                await idb.set(STORES.search, currentCacheKey, cachedItem);
+            }
         }
-        
+
         const elapsedTime = Date.now() - startTime;
-        const minDuration = 150; 
+        const minDuration = 150;
         const remainingTime = minDuration - elapsedTime;
         if (remainingTime > 0) {
             await new Promise(resolve => setTimeout(resolve, remainingTime));
@@ -787,7 +881,7 @@
         reEvaluateBtn.innerHTML = originalButtonHtml;
         renderTable();
     }
-    
+
     async function initialAssociatedMemberSetup(preSelectedDomains = null, memberCacheForSearch = {}) {
         const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
         if (!parentLogin || overrideParentCheckEl.checked) {
@@ -797,7 +891,7 @@
 
         const parentOrg = allResults.find(o => o.login.toLowerCase() === parentLogin);
         const parentDomains = new Set(parentOrg ? parentOrg.publicDomains : []);
-        
+
         const allVerifiedDomains = new Set();
         allResults.forEach(org => {
             if (org.isVerified && org.publicDomains) {
@@ -819,15 +913,15 @@
                 const checkboxWrapper = document.createElement('div');
                 checkboxWrapper.className = 'flex items-center py-1';
                 checkboxWrapper.innerHTML = `
-                    <input id="${checkboxId}" type="checkbox" value="${domain}" ${isChecked ? 'checked' : ''} class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded dark:bg-gray-900 dark:border-gray-600">
-                    <label for="${checkboxId}" class="ml-2 block text-sm text-gray-900 dark:text-gray-200 truncate" title="${domain}">${domain}</label>
-                `;
+                        <input id="${checkboxId}" type="checkbox" value="${domain}" ${isChecked ? 'checked' : ''} class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded dark:bg-gray-900 dark:border-gray-600">
+                        <label for="${checkboxId}" class="ml-2 block text-sm text-gray-900 dark:text-gray-200 truncate" title="${domain}">${domain}</label>
+                    `;
                 associatedDomainsCheckboxesEl.appendChild(checkboxWrapper);
             });
             associationControls.style.display = 'block';
             await reEvaluateAssociatedMembers(memberCacheForSearch); // Perform initial evaluation
         } else {
-             associationControls.style.display = 'none';
+            associationControls.style.display = 'none';
         }
     }
 
@@ -836,30 +930,30 @@
         let memberCacheForThisSearch = {};
         let hasNextPage = true, cursor = null, pagesFetched = 0, totalCount = 0;
         let apiWarning = null;
-        
+
         loaderContainer.style.display = 'flex';
         cancelSearchBtn.style.display = 'block';
         loaderStatus.textContent = 'Starting search...';
-        
+
         while (hasNextPage) {
             if (abortController.signal.aborted) throw new DOMException('Search Canceled', 'AbortError');
-            
+
             const result = await fetchGraphQLPage(queryString, cursor);
             if (result.errors) {
                 const err = new Error(result.errors.map(e => e.message).join('\n'));
                 err.stage = `GraphQL Search (Page ${pagesFetched + 1})`;
                 throw err;
             }
-            
+
             const searchResult = result.data.search;
             allResults.push(...searchResult.nodes.filter(node => node && node.id));
             totalCount = searchResult.userCount;
             hasNextPage = searchResult.pageInfo.hasNextPage;
             cursor = searchResult.pageInfo.endCursor;
             pagesFetched++;
-            
+
             loaderStatus.textContent = `Fetched ${allResults.length} of ~${totalCount} organizations (Page ${pagesFetched})...`;
-            
+
             if (pagesFetched >= 10 && hasNextPage) {
                 apiWarning = `GitHub API search result limit of 1000 items reached. Not all results could be fetched.`;
                 hasNextPage = false;
@@ -875,7 +969,7 @@
             const parentOrgExists = allResults.some(org => org.login.toLowerCase() === parentLogin);
             if (!parentOrgExists) {
                 loaderStatus.textContent = `Parent org '${parentLogin}' not in initial results. Fetching it directly...`;
-                await new Promise(resolve => setTimeout(resolve, 50)); 
+                await new Promise(resolve => setTimeout(resolve, 50));
                 try {
                     const parentQueryString = `user:${parentLogin} type:org`;
                     const result = await fetchGraphQLPage(parentQueryString, null);
@@ -887,7 +981,7 @@
                             allResults.push(parentOrgData);
                         }
                     } else {
-                         console.warn(`Direct fetch for parent org '${parentLogin}' returned no results.`);
+                        console.warn(`Direct fetch for parent org '${parentLogin}' returned no results.`);
                     }
                 } catch (e) {
                     console.warn(`An error occurred while fetching the parent org directly: ${e.message}`);
@@ -906,8 +1000,9 @@
 
                 const entry = globalMembersCache[org.login];
                 if (!entry || !Array.isArray(entry.members) || entry.members.length !== arr.length) {
-                    globalMembersCache[org.login] = { members: arr, etag: null };
-                    saveGlobalMembersCache();
+                    const cacheEntry = { members: arr, etag: null };
+                    globalMembersCache[org.login] = cacheEntry;
+                    await idb.set(STORES.members, org.login, cacheEntry);
                 }
             }
         }
@@ -924,9 +1019,9 @@
 
         await performMemberChecks(memberCacheForThisSearch);
         allResults.forEach(org => org.baseSharedMembersType = org.sharedMembersType);
-        
+
         await initialAssociatedMemberSetup(null, memberCacheForThisSearch);
-        
+
         return { warning: apiWarning, members: memberCacheForThisSearch };
     }
 
@@ -939,17 +1034,17 @@
         document.querySelectorAll('.filter-checkbox:checked').forEach(cb => {
             const column = cb.dataset.filterColumn;
             if (filters[column]) {
-                 filters[column].add(cb.value);
+                filters[column].add(cb.value);
             }
         });
         return filters;
     }
-    
-    function renderTable() {
+
+    async function renderTable() {
         const filters = getActiveFilters();
         const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
         let parentOrg = null;
-        
+
         let filteredResults = allResults.filter(org => {
             if (parentLogin && org.login.toLowerCase() === parentLogin) {
                 parentOrg = org;
@@ -958,7 +1053,7 @@
 
             const isVerifiedMatch = filters.isVerified.has(String(org.isVerified));
             const domainMatch = !filters.domainText || (org.publicDomains && org.publicDomains.join(' ').toLowerCase().includes(filters.domainText));
-            
+
             const sharedMemberFilter = filters.sharedMember;
             let sharedMemberMatch = true;
             if (sharedMemberFilter !== 'all') {
@@ -973,17 +1068,17 @@
             const comparison = valA > valB ? 1 : (valA < valB ? -1 : 0);
             return currentSort.direction === 'desc' ? comparison * -1 : comparison;
         });
-        
+
         const sortIcon = sortVerifiedBtn.querySelector('i');
         sortIcon.className = `fas fa-sort ml-1 ${currentSort.direction === 'asc' ? 'fa-sort-up' : 'fa-sort-down'}`;
 
-        resultsTable.innerHTML = ''; 
+        resultsTable.innerHTML = '';
         const displayedResults = parentOrg ? [parentOrg, ...filteredResults] : filteredResults;
-        const cachedItem = searchHistory[currentCacheKey];
+        const cachedItem = currentCacheKey ? await idb.get(STORES.search, currentCacheKey) : null;
 
         if (displayedResults.length === 0) {
             statusEl.textContent = 'No matching organizations found for your filter.';
-             if (cachedItem && cachedItem.warning) {
+            if (cachedItem && cachedItem.warning) {
                 const warningIcon = document.createElement('i');
                 warningIcon.className = 'fas fa-exclamation-triangle text-yellow-500 ml-2';
                 warningIcon.title = cachedItem.warning;
@@ -1002,7 +1097,7 @@
         }
 
         const createSharedMemberHtml = (status) => {
-             switch(status) {
+            switch (status) {
                 case 'parent': return '<i class="fas fa-check-circle text-green-500 dark:text-green-400 mr-2" title="Shares members with Parent Org"></i> Parent';
                 case 'associated': return '<i class="fas fa-link text-blue-600 dark:text-blue-400 mr-2" title="Shares members with an Associated Org"></i> Associated';
                 case 'error': return '<i class="fas fa-exclamation-triangle text-yellow-500 mr-2"></i> Error';
@@ -1015,90 +1110,91 @@
         displayedResults.forEach(org => {
             const row = document.createElement('tr');
             row.dataset.login = org.login;
-            if(parentOrg && org.login === parentOrg.login) {
+            if (parentOrg && org.login === parentOrg.login) {
                 row.className = 'bg-blue-50 dark:bg-blue-900/50 font-semibold';
             }
-            
-            const publicDomainsHtml = (org.publicDomains && org.publicDomains.length > 0) 
-                ? org.publicDomains.join('<br>') 
+
+            const publicDomainsHtml = (org.publicDomains && org.publicDomains.length > 0)
+                ? org.publicDomains.join('<br>')
                 : '<span class="text-gray-400 dark:text-gray-500">N/A</span>';
-            
+
             const verifiedHtml = org.isVerified ? `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">true</span>` : '';
 
             row.innerHTML = `
-                <td class="px-6 py-4 org-column"><a href="${org.url}" target="_blank" class="hover:underline text-blue-600 dark:text-blue-400"><div class="font-medium">${org.name || org.login}</div><div class="text-sm text-gray-500 dark:text-gray-400">${org.login}</div></a></td>
-                <td class="px-6 py-4 whitespace-nowrap">${verifiedHtml}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${publicDomainsHtml}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-left">${createSharedMemberHtml(org.sharedMembersType)}</td>
-            `;
+                    <td class="px-6 py-4 org-column"><a href="${org.url}" target="_blank" class="hover:underline text-blue-600 dark:text-blue-400"><div class="font-medium">${org.name || org.login}</div><div class="text-sm text-gray-500 dark:text-gray-400">${org.login}</div></a></td>
+                    <td class="px-6 py-4 whitespace-nowrap">${verifiedHtml}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${publicDomainsHtml}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-left">${createSharedMemberHtml(org.sharedMembersType)}</td>
+                `;
             resultsTable.appendChild(row);
         });
     }
 
     function renderHistory() {
         historyContainer.innerHTML = '';
-        Object.keys(searchHistory).forEach(key => {
+        Object.keys(searchHistory).sort().forEach(key => {
             const [query, parent] = key.split('|');
             const div = document.createElement('div');
             div.className = 'history-item group p-2 rounded-md flex justify-between items-center text-sm relative dark:text-gray-300';
-            
+
             const textSpan = document.createElement('span');
             textSpan.className = 'flex-grow truncate pr-2';
             textSpan.textContent = `${query} (Parent: ${parent || 'None'})`;
             textSpan.title = `${query} (Parent: ${parent || 'None'})`;
             textSpan.dataset.cacheKey = key;
-            
+
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'delete-history-item text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-500 ml-2 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity';
             deleteBtn.dataset.cacheKey = key;
             deleteBtn.title = 'Delete this entry';
             deleteBtn.innerHTML = `<i class="fas fa-trash-alt"></i>`;
-            
+
             div.appendChild(textSpan);
             div.appendChild(deleteBtn);
             historyContainer.appendChild(div);
         });
     }
 
-    function saveToHistory(key, data, selectedDomains, warning, members) {
-        searchHistory[key] = {
+    async function saveToHistory(key, data, selectedDomains, warning, members) {
+        const value = {
             results: data,
             selectedDomains: selectedDomains || [],
             warning: warning || null,
             members: members || {}
         };
-        saveCache();
+        searchHistory[key] = {}; // Add key to in-memory list for UI
+        await idb.set(STORES.search, key, value);
         renderHistory();
     }
 
-    function loadFromHistory(event) {
+    async function loadFromHistory(event) {
         const key = event.target.dataset.cacheKey;
         currentCacheKey = key;
         const [query, parent] = key.split('|');
-        const cachedItem = searchHistory[key];
+        const cachedItem = await idb.get(STORES.search, key);
 
         if (cachedItem && cachedItem.results) {
             allResults = cachedItem.results;
-            
+
             if (allResults.length > 0 && typeof allResults[0].baseSharedMembersType === 'undefined') {
-                 allResults.forEach(org => org.baseSharedMembersType = org.sharedMembersType);
-                 cachedItem.results = allResults;
-                 saveCache();
+                allResults.forEach(org => org.baseSharedMembersType = org.sharedMembersType);
+                cachedItem.results = allResults;
+                await idb.set(STORES.search, key, cachedItem);
             }
 
             searchQueryEl.value = query;
             parentOrgQueryEl.value = parent;
             domainFilterEl.value = '';
-            
+
             resultsContainer.style.display = 'block';
             loaderContainer.style.display = 'none';
             statusEl.innerHTML = '';
             statusEl.classList.remove('text-red-500');
 
-            initialAssociatedMemberSetup(cachedItem.selectedDomains, cachedItem.members); 
+            await initialAssociatedMemberSetup(cachedItem.selectedDomains, cachedItem.members);
         }
     }
-    
+
     // --- Event Listeners ---
     searchBtn.addEventListener('click', async () => {
         const query = searchQueryEl.value.trim();
@@ -1111,21 +1207,23 @@
             alert('Please provide a parent organization or check the override box to search.');
             return;
         }
-        
+
         localStorage.setItem('githubToken', githubTokenEl.value);
-        
+
         abortController = new AbortController();
         errorContainer.style.display = 'none';
         statusEl.innerHTML = '';
-        
+
         currentCacheKey = `${query}|${parentOrg}`;
         if (forceRefreshCheckEl.checked) {
+            await idb.delete(STORES.search, currentCacheKey);
             delete searchHistory[currentCacheKey];
+            renderHistory();
             forceRefreshCheckEl.checked = false;
         }
 
         if (searchHistory[currentCacheKey]) {
-            loadFromHistory({ target: { dataset: { cacheKey: currentCacheKey } } });
+            await loadFromHistory({ target: { dataset: { cacheKey: currentCacheKey } } });
             return;
         }
 
@@ -1142,17 +1240,17 @@
                 const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
                 const parentOrgData = allResults.find(o => o.login.toLowerCase() === parentLogin);
                 const initialDomains = parentOrgData ? parentOrgData.publicDomains : [];
-                saveToHistory(currentCacheKey, allResults, initialDomains, warning, members);
+                await saveToHistory(currentCacheKey, allResults, initialDomains, warning, members);
                 resultsContainer.style.display = 'block';
-                renderTable();
+                await renderTable();
             } else {
-                 statusEl.innerHTML = 'Search completed, but no organizations were found.';
-                 if (warning) {
+                statusEl.innerHTML = 'Search completed, but no organizations were found.';
+                if (warning) {
                     const warningIcon = document.createElement('i');
                     warningIcon.className = 'fas fa-exclamation-triangle text-yellow-500 ml-2';
                     warningIcon.title = warning;
                     statusEl.appendChild(warningIcon);
-                 }
+                }
             }
         } catch (error) {
             if (error.name === 'AbortError') {
@@ -1165,7 +1263,7 @@
                 errorStage.textContent = error.stage || 'Unknown';
                 errorMessage.textContent = error.message;
             }
-             errorContainer.style.display = 'block';
+            errorContainer.style.display = 'block';
         } finally {
             searchBtn.disabled = false;
             searchBtn.querySelector('i').className = 'fas fa-search mr-2';
@@ -1178,18 +1276,18 @@
         currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
         renderTable();
     });
-    
-    reEvaluateBtn.addEventListener('click', () => {
-        const cachedItem = searchHistory[currentCacheKey];
+
+    reEvaluateBtn.addEventListener('click', async () => {
+        const cachedItem = currentCacheKey ? await idb.get(STORES.search, currentCacheKey) : null;
         if (cachedItem) {
-            reEvaluateAssociatedMembers(cachedItem.members || {});
+            await reEvaluateAssociatedMembers(cachedItem.members || {});
         }
     });
 
     document.querySelectorAll('.filter-checkbox').forEach(cb => cb.addEventListener('change', renderTable));
     document.querySelectorAll('input[name="sharedMember"]').forEach(radio => radio.addEventListener('change', renderTable));
     domainFilterEl.addEventListener('input', renderTable);
-    
+
     autofillDomainBtn.addEventListener('click', () => {
         const parentOrgName = parentOrgQueryEl.value.trim();
         const parentLogin = parentOrgName.toLowerCase();
@@ -1207,18 +1305,22 @@
             alert('Parent organization not found in results or has no public domains.');
         }
     });
-    
-    exportBtn.addEventListener('click', () => {
-        if (!currentCacheKey || !searchHistory[currentCacheKey]) {
+
+    exportBtn.addEventListener('click', async () => {
+        if (!currentCacheKey) {
             alert("No active search results to export. Please run a search or load one from history.");
             return;
         }
-        
-        const dataToExport = searchHistory[currentCacheKey];
+        const dataToExport = await idb.get(STORES.search, currentCacheKey);
+        if (!dataToExport) {
+            alert("Could not load data from cache to export.");
+            return;
+        }
+
         const jsonString = JSON.stringify(dataToExport, null, 2);
         const blob = new Blob([jsonString], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
-        
+
         const a = document.createElement('a');
         a.href = url;
         const query = searchQueryEl.value.trim() || 'export';
@@ -1240,15 +1342,15 @@
     });
 
     // --- Cache Management Event Listeners ---
-    historyContainer.addEventListener('click', e => {
+    historyContainer.addEventListener('click', async e => {
         const loadTarget = e.target.closest('span');
         const deleteTarget = e.target.closest('.delete-history-item');
 
         if (deleteTarget) {
             const key = deleteTarget.dataset.cacheKey;
             if (confirm(`Are you sure you want to delete the cache for "${key.split('|')[0]}"?`)) {
+                await idb.delete(STORES.search, key);
                 delete searchHistory[key];
-                saveCache();
                 renderHistory();
 
                 if (Object.keys(searchHistory).length === 0) {
@@ -1257,7 +1359,7 @@
                 }
             }
         } else if (loadTarget) {
-             loadFromHistory(e);
+            await loadFromHistory(e);
         }
     });
 
@@ -1268,11 +1370,11 @@
     cancelClearCacheBtn.addEventListener('click', () => {
         clearCacheModal.style.display = 'none';
         confirmClearCacheCheck.checked = false;
-        alsoClearMembersCheck.checked   = false;   // ← new
-        holdToDeleteBtn.disabled        = true;
-        deleteProgress.style.width      = '0%';
+        alsoClearMembersCheck.checked = false;
+        holdToDeleteBtn.disabled = true;
+        deleteProgress.style.width = '0%';
     });
-    
+
     confirmClearCacheCheck.addEventListener('change', () => {
         holdToDeleteBtn.disabled = !confirmClearCacheCheck.checked;
     });
@@ -1287,27 +1389,25 @@
 
         const startTime = Date.now();
 
-        pressTimer = setTimeout(() => {
+        pressTimer = setTimeout(async () => {
             clearInterval(progressInterval);
 
-            // Always wipe search-history
+            await idb.clear(STORES.search);
             searchHistory = {};
-            localStorage.removeItem('githubSearchHistory');
 
-            // Wipe members cache only if the user asked for it
             if (alsoClearMembersCheck.checked) {
+                await idb.clear(STORES.members);
                 globalMembersCache = {};
-                localStorage.removeItem('githubOrgMembers');
             }
 
             renderHistory();
-            resultsContainer.style.display   = 'none';
+            resultsContainer.style.display = 'none';
             associationControls.style.display = 'none';
             cancelClearCacheBtn.click();
         }, holdDuration);
 
         progressInterval = setInterval(() => {
-            const elapsed  = Date.now() - startTime;
+            const elapsed = Date.now() - startTime;
             const progress = Math.min((elapsed / holdDuration) * 100, 100);
             deleteProgress.style.width = `${progress}%`;
         }, 50);
