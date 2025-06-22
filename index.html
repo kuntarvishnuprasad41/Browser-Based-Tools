@@ -1,0 +1,1457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Associated Organization Research Tool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Enable Tailwind's dark mode based on the user's system preference
+        tailwind.config = {
+            darkMode: 'media',
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* Light mode default */
+        }
+        .container {
+            max-width: 1600px;
+            margin: auto;
+            padding: 2rem;
+        }
+        .table-sortable th {
+            position: relative;
+        }
+        .table-sortable th:hover {
+            cursor: pointer;
+            background-color: #e5e7eb;
+        }
+        #loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .filter-input {
+            width: 100%;
+            padding: 4px 8px;
+            font-size: 12px;
+            border-radius: 4px;
+            border: 1px solid #d1d5db;
+        }
+        .history-item {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .history-item:hover {
+            background-color: #e5e7eb;
+        }
+        .filter-popover {
+            position: absolute;
+            z-index: 10;
+            display: none;
+            width: 160px;
+            background-color: white;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 8px;
+        }
+        .filter-container:hover .filter-popover {
+            display: block;
+        }
+        /* Table layout fix */
+        .results-table {
+            table-layout: fixed;
+            width: 100%;
+        }
+        /* Organization column width and wrapping */
+        .org-column {
+            width: 25%; /* Adjust percentage as needed */
+            word-wrap: break-word;
+        }
+        /* Style for the domain checkboxes to flow in columns */
+        #associatedDomainsCheckboxes {
+            display: flex;
+            flex-direction: column;
+            flex-wrap: wrap;
+            align-content: flex-start;
+        }
+
+        /* Dark Mode Styles */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-color: #111827; /* gray-900 */
+            }
+            .table-sortable th:hover {
+                background-color: #374151; /* gray-700 */
+            }
+            #loader {
+                border-color: #374151; /* gray-700 */
+                border-top-color: #60a5fa; /* blue-400 */
+            }
+            .history-item:hover {
+                background-color: #374151; /* gray-700 */
+            }
+            .filter-popover {
+                background-color: #1f2937; /* gray-800 */
+                border-color: #4b5563; /* gray-600 */
+            }
+            .filter-input {
+                background-color: #1f2937; /* gray-800 */
+                border-color: #4b5563; /* gray-600 */
+                color: #d1d5db; /* gray-300 */
+            }
+            .filter-input::placeholder {
+                color: #6b7280; /* gray-500 */
+            }
+        }
+    </style>
+</head>
+<body class="text-gray-900 dark:text-gray-300">
+
+<div class="container bg-white shadow-lg rounded-lg dark:bg-gray-800 dark:border dark:border-gray-700">
+    <header class="text-center mb-8 relative">
+        <h1 class="text-4xl font-bold text-gray-800 dark:text-gray-100">GitHub Associated Organization 
+            <br>Research Tool</h1>
+        <p class="text-gray-600 dark:text-gray-400 mt-2">A tool to more easily find and verify authenticity of GitHub accounts owned by large companies who don't list all their official accounts anywhere.</p>
+        <button id="showInfoBtn" class="absolute top-0 right-0 mt-2 mr-2 px-3 py-1.5 text-sm bg-blue-100 text-blue-800 rounded-full hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-300 dark:hover:bg-blue-900">
+            <i class="fas fa-question-circle mr-1"></i> What is this for?
+        </button>
+    </header>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 p-6 bg-gray-50 rounded-lg border border-gray-200 dark:bg-gray-800/50 dark:border-gray-700">
+        <div class="md:col-span-2">
+            <label for="parentOrgQuery" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Parent Organization</label>
+            <div class="mt-1 flex rounded-md shadow-sm">
+                <span class="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 sm:text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-400">github.com/</span>
+                <input type="text" id="parentOrgQuery" placeholder="e.g., adobe" class="flex-1 min-w-0 block w-full px-3 py-2 rounded-none rounded-r-md focus:ring-blue-500 focus:border-blue-500 sm:text-sm border-gray-300 dark:bg-gray-900 dark:border-gray-600 dark:text-gray-200 dark:placeholder-gray-500">
+            </div>
+        </div>
+        <div>
+            <label for="searchQuery" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Search Term</label>
+            <input type="text" id="searchQuery" placeholder="e.g., google" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-900 dark:border-gray-600 dark:text-gray-200 dark:placeholder-gray-500">
+        </div>
+        <div>
+            <label for="githubToken" class="block text-sm font-medium text-gray-700 dark:text-gray-300">GitHub Token (Required)
+                 <a href="https://github.com/settings/personal-access-tokens" target="_blank" class="text-xs text-blue-600 hover:underline ml-1">(Get a token)</a>
+            </label>
+            <input type="password" id="githubToken" placeholder="Your Personal Access Token" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-900 dark:border-gray-600 dark:text-gray-200 dark:placeholder-gray-500">
+        </div>
+        <div class="md:col-span-2 flex items-center justify-between">
+            <div class="flex items-center">
+                <input id="overrideParentCheck" type="checkbox" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600">
+                <label for="overrideParentCheck" class="ml-2 block text-sm text-gray-900 dark:text-gray-200">Allow search without a parent organization</label>
+            </div>
+            <div class="flex items-center">
+                <input id="forceRefreshCheck" type="checkbox" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600">
+                <label for="forceRefreshCheck" class="ml-2 block text-sm text-gray-900 dark:text-gray-200">Force overwrite previous result</label>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex justify-center items-center gap-4 mb-8">
+        <button id="searchBtn" class="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors duration-300 shadow-md disabled:bg-gray-400 disabled:cursor-not-allowed">
+            <i class="fas fa-search mr-2"></i>Search
+        </button>
+        <button id="exportBtn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 transition-colors duration-300 shadow-md">
+            <i class="fas fa-file-export mr-2"></i>Export JSON
+        </button>
+    </div>
+
+    <div id="associationControls" class="hidden mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 dark:bg-blue-900/20 dark:border-blue-800">
+        <label for="associatedDomainsCheckboxes" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Associated Verified Domains</label>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">Manually select any additional domains that you are certain are owned by the parent company.
+            <br>• In the 'Shared Member' column, organizations will be marked as "associated" if it has members in common with an organization that has done domain verification with one of these.
+            <br>• Whereas if the shared column says "parent", it means it shares members directly with the parent organization's main account.
+        </p>
+        </p>
+        <div id="associatedDomainsCheckboxes" class="p-2 border rounded-md max-h-48 overflow-y-auto bg-white dark:bg-gray-700 gap-x-4">
+            </div>
+        <button id="reEvaluateBtn" class="mt-3 bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors duration-300 shadow-md disabled:bg-gray-400">
+            <i class="fas fa-sync-alt mr-2"></i>Re-evaluate Associated Members
+        </button>
+    </div>
+
+    <div id="errorContainer" class="hidden my-4 p-4 bg-red-50 border border-red-200 rounded-lg dark:bg-red-900/20 dark:border-red-800">
+        <div class="flex justify-between items-center">
+            <p id="errorSummary" class="text-red-700 dark:text-red-400 font-semibold"></p>
+            <button id="toggleErrorDetailsBtn" class="text-sm text-blue-600 hover:underline">Show Details</button>
+        </div>
+        <div id="errorDetails" class="hidden mt-2 p-2 bg-red-100 rounded dark:bg-red-900/50">
+            <p class="text-sm text-gray-700 dark:text-gray-300"><strong>Stage:</strong> <span id="errorStage"></span></p>
+            <p class="text-sm text-gray-700 dark:text-gray-300 mt-1"><strong>Message:</strong> <span id="errorMessage"></span></p>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-5 gap-6">
+        <div class="mb-2" >
+            <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-1">
+                Search History
+            </h3>
+
+            <div class="flex items-center">
+                <button id="clearAllHistoryBtn"
+                        class="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded
+                            hover:bg-red-600 hover:text-white transition-colors
+                            dark:bg-gray-700 dark:text-gray-300
+                            dark:hover:bg-red-600 dark:hover:text-white">
+                    Clear All
+                </button>
+
+                <button id="refreshCacheBtn"
+                        class="ml-2 px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded
+                            hover:bg-blue-600 hover:text-white transition-colors
+                            dark:bg-gray-700 dark:text-gray-300
+                            dark:hover:bg-blue-600 dark:hover:text-white">
+                    Refresh Members Lists
+                </button>
+            </div>
+            <div id="historyContainer" class="mt-4 space-y-2"></div>
+        </div>
+
+
+        <div id="resultsContainer" class="col-span-4 hidden">
+            <div id="status" class="text-center my-4 text-gray-600 dark:text-gray-400"></div>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700 table-sortable results-table">
+                    <thead class="bg-gray-50 dark:bg-gray-700/50">
+                        <tr>
+                            <th scope="col" class="org-column px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" title="The official name and login of the organization.">Organization</th>
+                            <th scope="col" id="sortVerified" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" title="Whether the organization has a 'Verified' badge from GitHub.">
+                                Domains Verified <i class="fas fa-sort ml-1"></i>
+                            </th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" title="Public domains from the organization's website and email.">Domains</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" title="Whether the org shares any members with the parent organization or other verified associated organizations.">Shared Members</th>
+                        </tr>
+                        <tr class="bg-gray-100 dark:bg-gray-700">
+                             <th class="px-6 py-1"></th> <th class="px-6 py-1 text-left relative filter-container">
+                                <button class="text-gray-600 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 text-xs font-medium">Filter <i class="fas fa-chevron-down ml-1"></i></button>
+                                <div id="verifiedFilterPopover" class="filter-popover dark:text-gray-300">
+                                    <label class="flex items-center space-x-2"><input type="checkbox" class="filter-checkbox dark:bg-gray-900 dark:border-gray-600" data-filter-column="isVerified" value="true" checked><span>Verified</span></label>
+                                    <label class="flex items-center space-x-2"><input type="checkbox" class="filter-checkbox dark:bg-gray-900 dark:border-gray-600" data-filter-column="isVerified" value="false" checked><span>Not Verified</span></label>
+                                </div>
+                             </th>
+                             <th class="px-6 py-1">
+                                <div class="flex items-center gap-1">
+                                    <input type="text" id="domainFilter" class="filter-input" placeholder="Filter domains...">
+                                    <button id="autofillDomainBtn" title="Autofill with parent org's domains"><i class="fas fa-wand-magic-sparkles text-blue-500 dark:text-blue-400"></i></button>
+                                </div>
+                             </th>
+                             <th class="px-6 py-1">
+                                <div id="sharedMemberFilter" class="flex items-center space-x-3 text-xs font-medium text-gray-700 dark:text-gray-300">
+                                    <span>Filter:</span>
+                                    <label class="flex items-center space-x-1 cursor-pointer"><input type="radio" name="sharedMember" value="all" checked class="h-3 w-3 dark:bg-gray-900 dark:border-gray-600"><span>All</span></label>
+                                    <label class="flex items-center space-x-1 cursor-pointer"><input type="radio" name="sharedMember" value="parent" class="h-3 w-3 dark:bg-gray-900 dark:border-gray-600"><span>Parent</span></label>
+                                    <label class="flex items-center space-x-1 cursor-pointer"><input type="radio" name="sharedMember" value="associated" class="h-3 w-3 dark:bg-gray-900 dark:border-gray-600"><span>Associated</span></label>
+                                </div>
+                             </th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsTable" class="bg-white divide-y divide-gray-200 dark:bg-gray-800 dark:divide-gray-700">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+     <div id="loaderContainer" class="hidden flex-col items-center justify-center my-8">
+        <div id="loader"></div>
+        <p id="loaderStatus" class="mt-4 text-gray-600 dark:text-gray-400 text-center"></p>
+        <button id="cancelSearchBtn" class="hidden mt-4 bg-gray-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-600 transition-colors duration-300 shadow-md">
+            <i class="fas fa-times-circle mr-2"></i>Cancel Current Search
+        </button>
+    </div>
+
+</div>
+
+<div id="clearCacheModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+    <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white dark:bg-gray-800 dark:border-gray-700">
+        <div class="mt-3 text-center">
+            <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 dark:bg-red-900/50">
+                <i class="fas fa-exclamation-triangle text-red-600 dark:text-red-400 text-xl"></i>
+            </div>
+            <h3 class="text-lg leading-6 font-medium text-gray-900 dark:text-gray-200 mt-4">Clear All Search History?</h3>
+            <div class="mt-2 px-7 py-3">
+                <p class="text-sm text-gray-500 dark:text-gray-400">This action cannot be undone. All cached search results will be permanently deleted.</p>
+            </div>
+            <div class="flex items-center justify-center my-4">
+                <input id="confirmClearCache" type="checkbox" class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded dark:bg-gray-900 dark:border-gray-600">
+                <label for="confirmClearCache" class="ml-2 block text-sm text-gray-900 dark:text-gray-200">I am sure I want to delete everything.</label>
+            </div>
+            <div class="flex items-center justify-center my-2">
+                <input id="alsoClearMembersCheck"
+                    type="checkbox"
+                    class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded dark:bg-gray-900 dark:border-gray-600">
+                <label for="alsoClearMembersCheck"
+                    class="ml-2 block text-sm text-gray-900 dark:text-gray-200">
+                    Also clear members cache
+                </label>
+            </div>
+            <div class="items-center px-4 py-3">
+                <button id="holdToDeleteBtn" class="relative w-full px-4 py-2 bg-red-600 text-white text-base font-medium rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
+                    <div id="deleteProgress" class="absolute top-0 left-0 h-full bg-red-800 rounded-md transition-all duration-100" style="width: 0%;"></div>
+                    <span class="relative z-10">Hold to Delete</span>
+                </button>
+            </div>
+            <div class="items-center px-4 py-3">
+                 <button id="cancelClearCacheBtn" class="px-4 py-2 bg-gray-200 text-gray-800 text-base font-medium rounded-md w-full shadow-sm hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="infoModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-75 overflow-y-auto h-full w-full z-50">
+    <div class="relative top-20 mx-auto p-8 border w-full max-w-5xl shadow-lg rounded-md bg-white dark:bg-gray-800 dark:border-gray-700">
+        <button id="closeInfoModalBtn" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+            <span class="sr-only">Close</span>
+            <i class="fas fa-times text-2xl"></i>
+        </button>
+        <div class="text-gray-800 dark:text-gray-200">
+            <h3 class="text-2xl font-bold mb-4">What is This Tool For?</h3>
+            <p class="mb-4">Large companies often have many official GitHub organizations (aka accounts) that aren't centrally listed anywhere, nor have they verified their association with the parent company’s domain. This tool helps you discover and validate these scattered accounts yourself, by finding hidden connections between them, making it easier to see a company's full open-source footprint.</p>
+
+            <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded-md my-4 dark:bg-red-900/30 dark:text-red-300">
+                <p><strong class="font-bold">IMPORTANT:</strong> This is NOT a magic, fully automatic tool. It’s meant to make it easier to MANUALLY find and verify authenticity of accounts that may have a company’s name in it. The list of search results is NOT meant to be a list of associated accounts.</p>
+            </div>
+
+            <h3 class="text-2xl font-bold mb-4">How It Works</h3>
+            <p class="mb-4">This tool helps you find relationships between GitHub organizations using the following concepts:</p>
+            <ul class="list-disc list-inside space-y-3 mb-4">
+                <li><strong class="font-semibold">Parent Organization:</strong> This is basically the anchor point: A known, official account for the company you are researching (e.g., <code class="bg-gray-200 dark:bg-gray-700 rounded px-1 py-0.5 text-sm">microsoft</code>). You provide this as a starting point for comparison.</li>
+                <li><strong class="font-semibold">Search Term:</strong> The tool will do a GitHub search for accounts that simply contain this text. This assumes that most accounts associated with a company contain that company’s name.</li>
+                <li><strong class="font-semibold">Shared Members - Parent:</strong> A search result organization is marked as sharing members with the <strong>Parent</strong> if it has at least one “member” in common with the main parent organization you specified. Members must be invited by the organization and typically only includes employees and such. This could be a strong indicator of an official relationship.</li>
+                <li>
+                    <strong class="font-semibold">Shared Members - Associated:</strong> This is a secondary check that works by:
+                    <ol class="list-decimal list-inside mt-2 ml-4 space-y-2">
+                        <li>First, identifying a pool of "trusted" organizations from your results. These are organizations that have a <strong>verified domain</strong> on GitHub, whose verified domains match the parent organization's (or other domains you manually select as being known associated with the parent company, but might not be one of the parent account’s verified domains.)</li>
+                        <li>Like the shared "Parent" member check, all accounts are checked if they have any members in common with these other organizations that aren't the parent account, but are verified as associated with the parent company's known domains.</li>
+                    </ol>
+                </li>
+            </ul>
+
+            <h3 class="text-2xl font-bold mt-6 mb-2">Notes & Tips:</h3>
+            <ul class="list-disc list-inside space-y-2">
+                <li>The “domains” column lists only what web link or email domain is listed on the profile, which should NOT be assumed to be an official association unless confirmed by the “domain verified” column. Anyone can list any web link they want on the profile, it does not mean it’s an official account. You’ll still need to verify the association manually yourself. But it may help find accounts that are more likely to be official.</li>
+                <li>Because the accounts list is fetched via a simple search by name, this is NOT some magic tool to find all associated accounts with a company. If the company has official accounts that don’t include the search term, those won’t be found. Likewise, there are accounts that may contain the search term but have absolutely nothing to do with the company.</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+
+<script>
+    // --- DOM Elements ---
+    const searchQueryEl = document.getElementById('searchQuery');
+    const githubTokenEl = document.getElementById('githubToken');
+    const parentOrgQueryEl = document.getElementById('parentOrgQuery');
+    const overrideParentCheckEl = document.getElementById('overrideParentCheck');
+    const forceRefreshCheckEl = document.getElementById('forceRefreshCheck');
+    const searchBtn = document.getElementById('searchBtn');
+    const resultsContainer = document.getElementById('resultsContainer');
+    const resultsTable = document.getElementById('resultsTable');
+    const statusEl = document.getElementById('status');
+    const sortVerifiedBtn = document.getElementById('sortVerified');
+    const exportBtn = document.getElementById('exportBtn');
+    const loaderContainer = document.getElementById('loaderContainer');
+    const loaderStatus = document.getElementById('loaderStatus');
+    const historyContainer = document.getElementById('historyContainer');
+    const domainFilterEl = document.getElementById('domainFilter');
+    const autofillDomainBtn = document.getElementById('autofillDomainBtn');
+    const associationControls = document.getElementById('associationControls');
+    const associatedDomainsCheckboxesEl = document.getElementById('associatedDomainsCheckboxes');
+    const reEvaluateBtn = document.getElementById('reEvaluateBtn');
+
+    // --- Error & Cancel Elements ---
+    const cancelSearchBtn = document.getElementById('cancelSearchBtn');
+    const errorContainer = document.getElementById('errorContainer');
+    const errorSummary = document.getElementById('errorSummary');
+    const toggleErrorDetailsBtn = document.getElementById('toggleErrorDetailsBtn');
+    const errorDetails = document.getElementById('errorDetails');
+    const errorStage = document.getElementById('errorStage');
+    const errorMessage = document.getElementById('errorMessage');
+
+    // --- Modal Elements ---
+    const clearCacheModal = document.getElementById('clearCacheModal');
+    const confirmClearCacheCheck = document.getElementById('confirmClearCache');
+    const alsoClearMembersCheck = document.getElementById('alsoClearMembersCheck');
+    const holdToDeleteBtn = document.getElementById('holdToDeleteBtn');
+    const deleteProgress = document.getElementById('deleteProgress');
+    const cancelClearCacheBtn = document.getElementById('cancelClearCacheBtn');
+    const clearAllHistoryBtn = document.getElementById('clearAllHistoryBtn');
+
+    // --- State Management ---
+    let allResults = [];
+    let currentSort = { column: 'isVerified', direction: 'desc' };
+    let searchHistory = {}; // In-memory representation of keys for the UI
+    let currentCacheKey = null;
+    let abortController = new AbortController();
+    let globalMembersCache = {}; // In-memory cache for the current session
+
+    // --- IndexedDB Caching Implementation ---
+    const DB_NAME = 'GitHubOrgResearchDB';
+    const DB_VERSION = 1;
+    const STORES = {
+        search: 'searchCache',
+        members: 'membersCache'
+    };
+    let db;
+
+    function openDB() {
+        return new Promise((resolve, reject) => {
+            if (db) return resolve(db);
+
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+            request.onupgradeneeded = event => {
+                const dbInstance = event.target.result;
+                if (!dbInstance.objectStoreNames.contains(STORES.search)) {
+                    dbInstance.createObjectStore(STORES.search); // key is the search string
+                }
+                if (!dbInstance.objectStoreNames.contains(STORES.members)) {
+                    dbInstance.createObjectStore(STORES.members); // key is the org login
+                }
+            };
+
+            request.onsuccess = event => {
+                db = event.target.result;
+                resolve(db);
+            };
+
+            request.onerror = event => {
+                console.error('IndexedDB error:', event.target.error);
+                reject(event.target.error);
+            };
+        });
+    }
+
+    const idb = {
+        get: (storeName, key) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const request = store.get(key);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        }),
+        set: (storeName, key, value) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            const request = store.put(value, key);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        }),
+        delete: (storeName, key) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            const request = store.delete(key);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        }),
+        clear: (storeName) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            const request = store.clear();
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        }),
+        getAllKeys: (storeName) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const request = store.getAllKeys();
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        }),
+        getAllWithKeys: (storeName) => new Promise(async (resolve, reject) => {
+            const db = await openDB();
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const request = store.openCursor();
+            const items = {};
+            request.onsuccess = event => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    items[cursor.key] = cursor.value;
+                    cursor.continue();
+                } else {
+                    resolve(items);
+                }
+            };
+            request.onerror = () => reject(request.error);
+        }),
+    };
+
+    // --- On Page Load ---
+    document.addEventListener('DOMContentLoaded', async () => {
+        const cachedToken = localStorage.getItem('githubToken');
+        if (cachedToken) githubTokenEl.value = cachedToken;
+
+        try {
+            await openDB(); // Initialize DB connection
+            const historyKeys = await idb.getAllKeys(STORES.search);
+            searchHistory = {};
+            historyKeys.forEach(key => {
+                searchHistory[key] = {}; // Populate with placeholders for renderHistory
+            });
+            renderHistory();
+
+            globalMembersCache = await idb.getAllWithKeys(STORES.members);
+        } catch (e) {
+            console.error("Failed to initialize IndexedDB cache:", e);
+            alert("Could not initialize the local database. Caching will not work.");
+        }
+
+        parentOrgQueryEl.addEventListener('input', (e) => {
+            searchQueryEl.value = e.target.value;
+        });
+
+        document.getElementById('refreshCacheBtn').addEventListener('click', async () => {
+            if (!confirm('Refresh all organisation-member lists now?')) return;
+
+            const localMemberCache = {};           // fresh per-run scratch
+            let updates = 0;
+
+            for (const org of Object.keys(globalMembersCache)) {
+                try {
+                    if (await refreshMembersREST(org, localMemberCache)) updates++;
+                } catch (e) {
+                    console.error(`Failed to refresh ${org}:`, e);
+                }
+            }
+
+            alert(updates
+                ? `${updates} organisation cache${updates > 1 ? 's were' : ' was'} updated.`
+                : 'All organisation caches are already up-to-date.');
+        });
+    });
+
+    /* ------------------------------------------------------------------ *
+    *  Tiny concurrency-pool for REST requests (GraphQL stays serial!)   *
+    * ------------------------------------------------------------------ */
+    const MAX_CONCURRENT_REST_REQUESTS = 5;
+    let activeRestRequests = 0;
+    const restQueue = [];
+
+    function enqueueRest(fn) {
+        return new Promise((resolve, reject) => {
+            restQueue.push({ fn, resolve, reject });
+            processRestQueue();
+        });
+    }
+
+    function processRestQueue() {
+        if (activeRestRequests >= MAX_CONCURRENT_REST_REQUESTS || restQueue.length === 0) return;
+
+        const { fn, resolve, reject } = restQueue.shift();
+        activeRestRequests++;
+        fn()
+            .then(resolve)
+            .catch(reject)
+            .finally(() => {
+                activeRestRequests--;
+                processRestQueue();
+            });
+    }
+
+    async function smartFetchREST(url, options, stage) {
+        return enqueueRest(() => smartFetch(url, options, stage));
+    }
+
+    // --- GraphQL Query ---
+    const GQL_QUERY = `
+          query SearchOrganizations($queryString: String!, $cursor: String) {
+            search(query: $queryString, type: USER, first: 100, after: $cursor) {
+              userCount
+              pageInfo { endCursor, hasNextPage }
+              nodes {
+                ... on Organization {
+                  id
+                  name
+                  login
+                  isVerified
+                  email
+                  url
+                  websiteUrl
+                  membersWithRole(first: 20) {
+                    totalCount
+                    nodes {
+                      login
+                    }
+                  }
+                }
+              }
+            }
+          }`;
+
+    // --- Functions ---
+    async function smartFetch(url, options, stage) {
+        if (abortController.signal.aborted) throw new DOMException('Search was canceled by the user.', 'AbortError');
+
+        const token = githubTokenEl.value;
+        const headers = { ...options.headers };
+        if (token) headers['Authorization'] = `bearer ${token}`;
+
+        let attempt = 0;
+        const maxAttempts = 5;
+
+        while (attempt < maxAttempts) {
+            if (abortController.signal.aborted) throw new DOMException('Search was canceled by the user.', 'AbortError');
+
+            const response = await fetch(url, { ...options, headers, signal: abortController.signal });
+
+            if (response.ok) {
+                return response;
+            }
+
+            if (response.status === 403 || response.status === 429) {
+                const retryAfter = response.headers.get('Retry-After');
+                const rateLimitReset = response.headers.get('x-ratelimit-reset');
+
+                let waitSeconds = 60; // Default wait time
+                if (retryAfter) {
+                    waitSeconds = parseInt(retryAfter, 10);
+                } else if (rateLimitReset) {
+                    const resetTime = parseInt(rateLimitReset, 10) * 1000;
+                    waitSeconds = Math.max(0, Math.ceil((resetTime - Date.now()) / 1000));
+                }
+
+                if (waitSeconds > 0) {
+                    await new Promise(resolve => {
+                        let remaining = Math.ceil(waitSeconds);
+                        const updateStatus = () => {
+                            loaderStatus.innerHTML = `
+                                    <i class="fas fa-pause-circle text-yellow-500 mr-2"></i>
+                                    Hit API rate limit and told to wait ${waitSeconds}s. Waiting for ${remaining} seconds... (Stage: ${stage})
+                                `;
+                        };
+                        updateStatus();
+
+                        const interval = setInterval(() => {
+                            if (abortController.signal.aborted) {
+                                clearInterval(interval);
+                                resolve(); // Let the abort error be thrown at the top of the loop
+                                return;
+                            }
+                            remaining--;
+                            updateStatus();
+                            if (remaining <= 0) {
+                                clearInterval(interval);
+                                resolve();
+                            }
+                        }, 1000);
+                    });
+                    attempt++;
+                    continue; // Retry the request
+                }
+            }
+
+            const errorData = await response.json().catch(() => ({ message: `HTTP Error: ${response.status} ${response.statusText}` }));
+            const err = new Error(errorData.message || `API request failed at stage: ${stage}`);
+            err.stage = stage;
+            err.status = response.status;
+            throw err;
+        }
+
+        const finalErr = new Error(`Request failed after ${maxAttempts} attempts. Last stage: ${stage}.`);
+        finalErr.stage = stage;
+        throw finalErr;
+    }
+
+    async function fetchGraphQLPage(queryString, cursor) {
+        const body = JSON.stringify({ query: GQL_QUERY, variables: { queryString, cursor } });
+        const response = await smartFetch('https://api.github.com/graphql', { method: 'POST', body, headers: { 'Content-Type': 'application/json' } }, 'GraphQL Search');
+        return response.json();
+    }
+
+    async function fetchAllMembersREST(orgLogin, localMemberCache) {
+        const globalEntry = globalMembersCache[orgLogin];
+
+        if (localMemberCache[orgLogin]) {
+            return new Set(localMemberCache[orgLogin]);
+        }
+        if (globalEntry && Array.isArray(globalEntry.members)) {
+            localMemberCache[orgLogin] = globalEntry.members;
+            return new Set(globalEntry.members);
+        }
+
+        const { members, etag } = await pullMembersFromGitHub(orgLogin, null);
+        const cacheEntry = { members, etag };
+        globalMembersCache[orgLogin] = cacheEntry;
+        localMemberCache[orgLogin] = members;
+        await idb.set(STORES.members, orgLogin, cacheEntry);
+        return new Set(members);
+    }
+
+    async function pullMembersFromGitHub(orgLogin, etag) {
+        const members = new Set();
+        let page = 1;
+        let storedEtag = null;
+
+        while (true) {
+            const url = `https://api.github.com/orgs/${orgLogin}/members?per_page=100&page=${page}`;
+            const stage = `Refreshing members for ${orgLogin} (page ${page})`;
+            const hdrs = { 'Accept': 'application/vnd.github.v3+json' };
+            if (etag && page === 1) hdrs['If-None-Match'] = etag;
+
+            let resp;
+            try {
+                resp = await smartFetchREST(url, { headers: hdrs }, stage);
+            } catch (err) {
+                if (err.status === 304) {
+                    return { members: null, etag };
+                }
+                throw err; // Other errors bubble up
+            }
+
+            if (!storedEtag && resp.headers.has('etag')) {
+                storedEtag = resp.headers.get('etag');
+            }
+
+            const data = await resp.json();
+            data.forEach(m => members.add(m.login));
+
+            if (data.length < 100) break;     // last page reached
+            page++;
+
+            await new Promise(r => setTimeout(r, 50));
+        }
+
+        return { members: Array.from(members), etag: storedEtag };
+    }
+
+
+    /* Refresh one organisation and update both caches in-place. Returns true if anything changed. */
+    async function refreshMembersREST(orgLogin, localMemberCache) {
+        const existing = globalMembersCache[orgLogin] ?? { members: [], etag: null };
+        const { members, etag } = await pullMembersFromGitHub(orgLogin, existing.etag);
+
+        if (members === null) {            // 304 → unchanged
+            return false;
+        }
+        const cacheEntry = { members, etag };
+        globalMembersCache[orgLogin] = cacheEntry;
+        localMemberCache[orgLogin] = members;
+        await idb.set(STORES.members, orgLogin, cacheEntry);
+        return true;
+    }
+
+    function extractDomain(urlString) {
+        if (!urlString) return null;
+        try {
+            // Remove any malformed protocol prefix before the actual URL. In at least one case mailto: was put before a twitter URL
+            // Matches patterns like "mailto:https://", "ftp:http://", etc.
+            urlString = urlString.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:(?=https?:\/\/)/i, '');
+
+            // Just remove any mailto: prefix if it exists still
+            if (urlString.startsWith('mailto:')) {
+                urlString = urlString.substring(7);
+            }
+
+            if (urlString.includes('@')) return urlString.split('@')[1];
+
+            // Add protocol if missing
+            let normalizedUrl = urlString;
+            if (!urlString.startsWith('http://') && !urlString.startsWith('https://')) {
+                normalizedUrl = 'https://' + urlString;
+            }
+
+            const url = new URL(normalizedUrl);
+            let hostname = url.hostname;
+            if (hostname.startsWith('www.')) hostname = hostname.substring(4);
+            return hostname;
+        } catch (e) {
+            return urlString;
+        }
+    }
+
+    async function performMemberChecks(localMemberCache) {
+        allResults.forEach(org => org.sharedMembersType = 'none');
+        const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
+        if (!parentLogin || overrideParentCheckEl.checked) {
+            return;
+        }
+        
+        // This function now assumes all necessary member lists are already in localMemberCache.
+        const parentMembers = new Set(localMemberCache[parentLogin] || []);
+        if (parentMembers.size === 0) return;
+
+        loaderStatus.textContent = `Comparing members...`;
+        allResults.forEach(targetOrg => {
+            if (targetOrg.login.toLowerCase() === parentLogin || !targetOrg.membersWithRole) {
+                targetOrg.sharedMembersType = 'N/A';
+                return;
+            }
+            const targetMembers = new Set((localMemberCache[targetOrg.login] || []).concat(targetOrg.membersWithRole.nodes.map(m => m.login)));
+            const intersection = new Set([...parentMembers].filter(member => targetMembers.has(member)));
+            if (intersection.size > 0) {
+                targetOrg.sharedMembersType = 'parent';
+            }
+        });
+    }
+
+    async function reEvaluateAssociatedMembers(memberCacheForSearch) {
+        const originalButtonHtml = reEvaluateBtn.innerHTML;
+        reEvaluateBtn.disabled = true;
+        reEvaluateBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Re-evaluating...';
+        const startTime = Date.now();
+
+        allResults.forEach(org => {
+            if (org.baseSharedMembersType) {
+                org.sharedMembersType = org.baseSharedMembersType;
+            }
+        });
+
+        const selectedDomains = new Set();
+        document.querySelectorAll('#associatedDomainsCheckboxes input:checked').forEach(cb => {
+            selectedDomains.add(cb.value);
+        });
+
+        if (selectedDomains.size > 0) {
+            const verifiedAssociatedOrgs = allResults.filter(org =>
+                org.isVerified &&
+                org.publicDomains.some(d => selectedDomains.has(d))
+            );
+
+            const associatedMembers = new Set();
+            for (const assocOrg of verifiedAssociatedOrgs) {
+                if (assocOrg.membersWithRole && assocOrg.membersWithRole.totalCount === 0) {
+                    continue;
+                }
+                try {
+                    const members = await fetchAllMembersREST(assocOrg.login, memberCacheForSearch);
+                    members.forEach(m => associatedMembers.add(m));
+                } catch (e) {
+                    console.error(`Could not fetch members for associated org ${assocOrg.login}: ${e.message}. This org will be skipped.`);
+                }
+            }
+
+            allResults.forEach(targetOrg => {
+                if (targetOrg.sharedMembersType !== 'none') {
+                    return;
+                }
+
+                if (verifiedAssociatedOrgs.some(o => o.login === targetOrg.login)) {
+                    targetOrg.sharedMembersType = 'N/A';
+                    return;
+                }
+
+                const targetMembers = new Set(targetOrg.membersWithRole.nodes.map(m => m.login));
+                const intersection = new Set([...associatedMembers].filter(member => targetMembers.has(member)));
+                if (intersection.size > 0) {
+                    targetOrg.sharedMembersType = 'associated';
+                }
+            });
+        }
+
+        if (currentCacheKey) {
+            const cachedItem = await idb.get(STORES.search, currentCacheKey);
+            if (cachedItem) {
+                cachedItem.selectedDomains = Array.from(selectedDomains);
+                cachedItem.results = allResults;
+                cachedItem.members = memberCacheForSearch;
+                await idb.set(STORES.search, currentCacheKey, cachedItem);
+            }
+        }
+
+        const elapsedTime = Date.now() - startTime;
+        const minDuration = 150;
+        const remainingTime = minDuration - elapsedTime;
+        if (remainingTime > 0) {
+            await new Promise(resolve => setTimeout(resolve, remainingTime));
+        }
+
+        reEvaluateBtn.disabled = false;
+        reEvaluateBtn.innerHTML = originalButtonHtml;
+        renderTable();
+    }
+
+    async function initialAssociatedMemberSetup(preSelectedDomains = null, memberCacheForSearch = {}) {
+        const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
+        if (!parentLogin || overrideParentCheckEl.checked) {
+            associationControls.style.display = 'none';
+            return;
+        }
+
+        const parentOrg = allResults.find(o => o.login.toLowerCase() === parentLogin);
+        const parentDomains = new Set(parentOrg ? parentOrg.publicDomains : []);
+
+        const allVerifiedDomains = new Set();
+        allResults.forEach(org => {
+            if (org.isVerified && org.publicDomains) {
+                org.publicDomains.forEach(domain => allVerifiedDomains.add(domain));
+            }
+        });
+
+        associatedDomainsCheckboxesEl.innerHTML = '';
+        if (allVerifiedDomains.size > 0) {
+            const parentDomainList = Array.from(parentDomains).sort();
+            const otherDomains = Array.from(allVerifiedDomains).filter(d => !parentDomains.has(d));
+            const relatedDomains = otherDomains.filter(d => Array.from(parentDomains).some(pd => d.endsWith('.' + pd) || pd.endsWith('.' + d))).sort();
+            const unrelatedDomains = otherDomains.filter(d => !relatedDomains.includes(d)).sort();
+            const sortedDomains = [...parentDomainList, ...relatedDomains, ...unrelatedDomains];
+
+            sortedDomains.forEach(domain => {
+                let isChecked = (preSelectedDomains !== null) ? preSelectedDomains.includes(domain) : parentDomains.has(domain);
+                const checkboxId = `domain-cb-${domain.replace(/\./g, '-')}`;
+                const checkboxWrapper = document.createElement('div');
+                checkboxWrapper.className = 'flex items-center py-1';
+                checkboxWrapper.innerHTML = `
+                        <input id="${checkboxId}" type="checkbox" value="${domain}" ${isChecked ? 'checked' : ''} class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded dark:bg-gray-900 dark:border-gray-600">
+                        <label for="${checkboxId}" class="ml-2 block text-sm text-gray-900 dark:text-gray-200 truncate" title="${domain}">${domain}</label>
+                    `;
+                associatedDomainsCheckboxesEl.appendChild(checkboxWrapper);
+            });
+            associationControls.style.display = 'block';
+            await reEvaluateAssociatedMembers(memberCacheForSearch); // Perform initial evaluation
+        } else {
+            associationControls.style.display = 'none';
+        }
+    }
+
+    async function fetchAllData(queryString) {
+        allResults = [];
+        let memberCacheForThisSearch = {};
+        let hasNextPage = true, cursor = null, pagesFetched = 0, totalCount = 0;
+        let apiWarning = null;
+
+        loaderContainer.style.display = 'flex';
+        cancelSearchBtn.style.display = 'block';
+        loaderStatus.textContent = 'Starting search...';
+
+        while (hasNextPage) {
+            if (abortController.signal.aborted) throw new DOMException('Search Canceled', 'AbortError');
+
+            const result = await fetchGraphQLPage(queryString, cursor);
+            if (result.errors) {
+                const err = new Error(result.errors.map(e => e.message).join('\n'));
+                err.stage = `GraphQL Search (Page ${pagesFetched + 1})`;
+                throw err;
+            }
+
+            const searchResult = result.data.search;
+            allResults.push(...searchResult.nodes.filter(node => node && node.id));
+            totalCount = searchResult.userCount;
+            hasNextPage = searchResult.pageInfo.hasNextPage;
+            cursor = searchResult.pageInfo.endCursor;
+            pagesFetched++;
+
+            loaderStatus.textContent = `Fetched ${allResults.length} of ~${totalCount} organizations (Page ${pagesFetched})...`;
+
+            if (pagesFetched >= 10 && hasNextPage) {
+                apiWarning = `GitHub API search result limit of 1000 items reached. Not all results could be fetched.`;
+                hasNextPage = false;
+            }
+
+            if (hasNextPage) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+        }
+
+        const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
+        if (parentLogin && !overrideParentCheckEl.checked) {
+            const parentOrgExists = allResults.some(org => org.login.toLowerCase() === parentLogin);
+            if (!parentOrgExists) {
+                loaderStatus.textContent = `Parent org '${parentLogin}' not in initial results. Fetching it directly...`;
+                await new Promise(resolve => setTimeout(resolve, 50));
+                try {
+                    const parentQueryString = `user:${parentLogin} type:org`;
+                    const result = await fetchGraphQLPage(parentQueryString, null);
+                    if (result.errors) {
+                        console.warn(`Could not fetch parent org '${parentLogin}': ${result.errors.map(e => e.message).join('\n')}`);
+                    } else if (result.data.search.nodes && result.data.search.nodes.length > 0) {
+                        const parentOrgData = result.data.search.nodes[0];
+                        if (parentOrgData && parentOrgData.id) {
+                            allResults.push(parentOrgData);
+                        }
+                    } else {
+                        console.warn(`Direct fetch for parent org '${parentLogin}' returned no results.`);
+                    }
+                } catch (e) {
+                    console.warn(`An error occurred while fetching the parent org directly: ${e.message}`);
+                }
+            }
+        }
+
+        // Proactively fetch all members for orgs where the total count is greater than the nodes fetched
+        for (const org of allResults) {
+            if (org.membersWithRole && org.membersWithRole.totalCount > org.membersWithRole.nodes.length) {
+                loaderStatus.textContent = `Fetching all ${org.membersWithRole.totalCount} members for ${org.login}...`;
+                await fetchAllMembersREST(org.login, memberCacheForThisSearch);
+            } else if (org.membersWithRole) {
+                const arr = org.membersWithRole.nodes.map(m => m.login);
+                memberCacheForThisSearch[org.login] = arr;
+
+                const entry = globalMembersCache[org.login];
+                if (!entry || !Array.isArray(entry.members) || entry.members.length !== arr.length) {
+                    const cacheEntry = { members: arr, etag: null };
+                    globalMembersCache[org.login] = cacheEntry;
+                    await idb.set(STORES.members, org.login, cacheEntry);
+                }
+            }
+        }
+
+        loaderStatus.textContent = `Processing domains...`;
+        allResults.forEach(org => {
+            if (org.id) {
+                const domains = new Set();
+                if (org.websiteUrl) domains.add(extractDomain(org.websiteUrl));
+                if (org.email) domains.add(extractDomain(`mailto:${org.email}`));
+                org.publicDomains = Array.from(domains);
+            }
+        });
+
+        await performMemberChecks(memberCacheForThisSearch);
+        allResults.forEach(org => org.baseSharedMembersType = org.sharedMembersType);
+
+        await initialAssociatedMemberSetup(null, memberCacheForThisSearch);
+
+        return { warning: apiWarning, members: memberCacheForThisSearch };
+    }
+
+    function getActiveFilters() {
+        const filters = {
+            isVerified: new Set(),
+            domainText: domainFilterEl.value.toLowerCase(),
+            sharedMember: document.querySelector('input[name="sharedMember"]:checked').value
+        };
+        document.querySelectorAll('.filter-checkbox:checked').forEach(cb => {
+            const column = cb.dataset.filterColumn;
+            if (filters[column]) {
+                filters[column].add(cb.value);
+            }
+        });
+        return filters;
+    }
+
+    async function renderTable() {
+        const filters = getActiveFilters();
+        const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
+        let parentOrg = null;
+
+        let filteredResults = allResults.filter(org => {
+            if (parentLogin && org.login.toLowerCase() === parentLogin) {
+                parentOrg = org;
+                return false;
+            }
+
+            const isVerifiedMatch = filters.isVerified.has(String(org.isVerified));
+            const domainMatch = !filters.domainText || (org.publicDomains && org.publicDomains.join(' ').toLowerCase().includes(filters.domainText));
+
+            const sharedMemberFilter = filters.sharedMember;
+            let sharedMemberMatch = true;
+            if (sharedMemberFilter !== 'all') {
+                sharedMemberMatch = org.sharedMembersType === sharedMemberFilter;
+            }
+
+            return isVerifiedMatch && domainMatch && sharedMemberMatch;
+        });
+
+        filteredResults.sort((a, b) => {
+            const valA = a[currentSort.column], valB = b[currentSort.column];
+            const comparison = valA > valB ? 1 : (valA < valB ? -1 : 0);
+            return currentSort.direction === 'desc' ? comparison * -1 : comparison;
+        });
+
+        const sortIcon = sortVerifiedBtn.querySelector('i');
+        sortIcon.className = `fas fa-sort ml-1 ${currentSort.direction === 'asc' ? 'fa-sort-up' : 'fa-sort-down'}`;
+
+        resultsTable.innerHTML = '';
+        const displayedResults = parentOrg ? [parentOrg, ...filteredResults] : filteredResults;
+        const cachedItem = currentCacheKey ? await idb.get(STORES.search, currentCacheKey) : null;
+
+        if (displayedResults.length === 0) {
+            statusEl.textContent = 'No matching organizations found for your filter.';
+            if (cachedItem && cachedItem.warning) {
+                const warningIcon = document.createElement('i');
+                warningIcon.className = 'fas fa-exclamation-triangle text-yellow-500 ml-2';
+                warningIcon.title = cachedItem.warning;
+                statusEl.appendChild(warningIcon);
+            }
+            resultsTable.innerHTML = '<tr><td colspan="4" class="text-center py-4">No results match your current filter.</td></tr>';
+            return;
+        }
+
+        statusEl.textContent = `Displaying ${displayedResults.length} of ${allResults.length} total results.`;
+        if (cachedItem && cachedItem.warning) {
+            const warningIcon = document.createElement('i');
+            warningIcon.className = 'fas fa-exclamation-triangle text-yellow-500 ml-2';
+            warningIcon.title = cachedItem.warning;
+            statusEl.appendChild(warningIcon);
+        }
+
+        const createSharedMemberHtml = (status) => {
+            switch (status) {
+                case 'parent': return '<i class="fas fa-check-circle text-green-500 dark:text-green-400 mr-2" title="Shares members with Parent Org"></i> Parent';
+                case 'associated': return '<i class="fas fa-link text-blue-600 dark:text-blue-400 mr-2" title="Shares members with an Associated Org"></i> Associated';
+                case 'error': return '<i class="fas fa-exclamation-triangle text-yellow-500 mr-2"></i> Error';
+                case 'N/A': return '<span class="text-gray-400 dark:text-gray-500">N/A</span>';
+                case 'none':
+                default: return '<i class="fas fa-times-circle text-gray-400 dark:text-gray-500 mr-2"></i> No';
+            }
+        };
+
+        displayedResults.forEach(org => {
+            const row = document.createElement('tr');
+            row.dataset.login = org.login;
+            if (parentOrg && org.login === parentOrg.login) {
+                row.className = 'bg-blue-50 dark:bg-blue-900/50 font-semibold';
+            }
+
+            const publicDomainsHtml = (org.publicDomains && org.publicDomains.length > 0)
+                ? org.publicDomains.join('<br>')
+                : '<span class="text-gray-400 dark:text-gray-500">N/A</span>';
+
+            const verifiedHtml = org.isVerified ? `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">true</span>` : '';
+
+            row.innerHTML = `
+                    <td class="px-6 py-4 org-column"><a href="${org.url}" target="_blank" class="hover:underline text-blue-600 dark:text-blue-400"><div class="font-medium">${org.name || org.login}</div><div class="text-sm text-gray-500 dark:text-gray-400">${org.login}</div></a></td>
+                    <td class="px-6 py-4 whitespace-nowrap">${verifiedHtml}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${publicDomainsHtml}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-left">${createSharedMemberHtml(org.sharedMembersType)}</td>
+                `;
+            resultsTable.appendChild(row);
+        });
+    }
+
+    function renderHistory() {
+        historyContainer.innerHTML = '';
+        Object.keys(searchHistory).sort().forEach(key => {
+            const [query, parent] = key.split('|');
+            const div = document.createElement('div');
+            div.className = 'history-item group p-2 rounded-md flex justify-between items-center text-sm relative dark:text-gray-300';
+
+            const textSpan = document.createElement('span');
+            textSpan.className = 'flex-grow truncate pr-2';
+            textSpan.textContent = `${query} (Parent: ${parent || 'None'})`;
+            textSpan.title = `${query} (Parent: ${parent || 'None'})`;
+            textSpan.dataset.cacheKey = key;
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-history-item text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-500 ml-2 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity';
+            deleteBtn.dataset.cacheKey = key;
+            deleteBtn.title = 'Delete this entry';
+            deleteBtn.innerHTML = `<i class="fas fa-trash-alt"></i>`;
+
+            div.appendChild(textSpan);
+            div.appendChild(deleteBtn);
+            historyContainer.appendChild(div);
+        });
+    }
+
+    async function saveToHistory(key, data, selectedDomains, warning, members) {
+        const value = {
+            results: data,
+            selectedDomains: selectedDomains || [],
+            warning: warning || null,
+            members: members || {}
+        };
+        searchHistory[key] = {}; // Add key to in-memory list for UI
+        await idb.set(STORES.search, key, value);
+        renderHistory();
+    }
+
+    async function loadFromHistory(event) {
+        const key = event.target.dataset.cacheKey;
+        currentCacheKey = key;
+        const [query, parent] = key.split('|');
+        const cachedItem = await idb.get(STORES.search, key);
+
+        if (cachedItem && cachedItem.results) {
+            allResults = cachedItem.results;
+
+            if (allResults.length > 0 && typeof allResults[0].baseSharedMembersType === 'undefined') {
+                allResults.forEach(org => org.baseSharedMembersType = org.sharedMembersType);
+                cachedItem.results = allResults;
+                await idb.set(STORES.search, key, cachedItem);
+            }
+
+            searchQueryEl.value = query;
+            parentOrgQueryEl.value = parent;
+            domainFilterEl.value = '';
+
+            resultsContainer.style.display = 'block';
+            loaderContainer.style.display = 'none';
+            statusEl.innerHTML = '';
+            statusEl.classList.remove('text-red-500');
+
+            await initialAssociatedMemberSetup(cachedItem.selectedDomains, cachedItem.members);
+        }
+    }
+
+    // --- Event Listeners ---
+    searchBtn.addEventListener('click', async () => {
+        const query = searchQueryEl.value.trim();
+        const parentOrg = parentOrgQueryEl.value.trim();
+        if (!query) {
+            alert('Please enter a search query.');
+            return;
+        }
+        if (!parentOrg && !overrideParentCheckEl.checked) {
+            alert('Please provide a parent organization or check the override box to search.');
+            return;
+        }
+
+        localStorage.setItem('githubToken', githubTokenEl.value);
+
+        abortController = new AbortController();
+        errorContainer.style.display = 'none';
+        statusEl.innerHTML = '';
+
+        currentCacheKey = `${query}|${parentOrg}`;
+        if (forceRefreshCheckEl.checked) {
+            await idb.delete(STORES.search, currentCacheKey);
+            delete searchHistory[currentCacheKey];
+            renderHistory();
+            forceRefreshCheckEl.checked = false;
+        }
+
+        if (searchHistory[currentCacheKey]) {
+            await loadFromHistory({ target: { dataset: { cacheKey: currentCacheKey } } });
+            return;
+        }
+
+        searchBtn.disabled = true;
+        searchBtn.querySelector('i').className = 'fas fa-spinner fa-spin mr-2';
+        resultsContainer.style.display = 'none';
+        associationControls.style.display = 'none';
+        statusEl.classList.remove('text-red-500');
+
+        try {
+            const { warning, members } = await fetchAllData(`type:org "${query}" in:name OR "${query}" in:login repos:>0`);
+
+            if (allResults.length > 0) {
+                const parentLogin = parentOrgQueryEl.value.trim().toLowerCase();
+                const parentOrgData = allResults.find(o => o.login.toLowerCase() === parentLogin);
+                const initialDomains = parentOrgData ? parentOrgData.publicDomains : [];
+                await saveToHistory(currentCacheKey, allResults, initialDomains, warning, members);
+                resultsContainer.style.display = 'block';
+                await renderTable();
+            } else {
+                statusEl.innerHTML = 'Search completed, but no organizations were found.';
+                if (warning) {
+                    const warningIcon = document.createElement('i');
+                    warningIcon.className = 'fas fa-exclamation-triangle text-yellow-500 ml-2';
+                    warningIcon.title = warning;
+                    statusEl.appendChild(warningIcon);
+                }
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                errorSummary.textContent = 'Search Canceled.';
+                errorDetails.style.display = 'none';
+                toggleErrorDetailsBtn.style.display = 'none';
+            } else {
+                errorSummary.textContent = 'An error occurred during the search.';
+                toggleErrorDetailsBtn.style.display = 'block';
+                errorStage.textContent = error.stage || 'Unknown';
+                errorMessage.textContent = error.message;
+            }
+            errorContainer.style.display = 'block';
+        } finally {
+            searchBtn.disabled = false;
+            searchBtn.querySelector('i').className = 'fas fa-search mr-2';
+            loaderContainer.style.display = 'none';
+            cancelSearchBtn.style.display = 'none';
+        }
+    });
+
+    sortVerifiedBtn.addEventListener('click', () => {
+        currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+        renderTable();
+    });
+
+    reEvaluateBtn.addEventListener('click', async () => {
+        const cachedItem = currentCacheKey ? await idb.get(STORES.search, currentCacheKey) : null;
+        if (cachedItem) {
+            await reEvaluateAssociatedMembers(cachedItem.members || {});
+        }
+    });
+
+    document.querySelectorAll('.filter-checkbox').forEach(cb => cb.addEventListener('change', renderTable));
+    document.querySelectorAll('input[name="sharedMember"]').forEach(radio => radio.addEventListener('change', renderTable));
+    domainFilterEl.addEventListener('input', renderTable);
+
+    autofillDomainBtn.addEventListener('click', () => {
+        const parentOrgName = parentOrgQueryEl.value.trim();
+        const parentLogin = parentOrgName.toLowerCase();
+        if (!parentLogin || allResults.length === 0) {
+            alert('Please specify a parent org and run a search first.');
+            return;
+        }
+        const parentOrg = allResults.find(o => o.login.toLowerCase() === parentLogin);
+        if (parentOrg && parentOrg.publicDomains.length > 0) {
+            const preferredDomain = `${parentLogin}.com`;
+            let domainToUse = parentOrg.publicDomains.includes(preferredDomain) ? preferredDomain : parentOrg.publicDomains[0];
+            domainFilterEl.value = domainToUse;
+            renderTable();
+        } else {
+            alert('Parent organization not found in results or has no public domains.');
+        }
+    });
+
+    exportBtn.addEventListener('click', async () => {
+        if (!currentCacheKey) {
+            alert("No active search results to export. Please run a search or load one from history.");
+            return;
+        }
+        const dataToExport = await idb.get(STORES.search, currentCacheKey);
+        if (!dataToExport) {
+            alert("Could not load data from cache to export.");
+            return;
+        }
+
+        const jsonString = JSON.stringify(dataToExport, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        const query = searchQueryEl.value.trim() || 'export';
+        a.download = `github-orgs-${query.replace(/\s+/g, '_')}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+
+    cancelSearchBtn.addEventListener('click', () => {
+        abortController.abort();
+    });
+
+    toggleErrorDetailsBtn.addEventListener('click', () => {
+        const isHidden = errorDetails.style.display === 'none';
+        errorDetails.style.display = isHidden ? 'block' : 'none';
+        toggleErrorDetailsBtn.textContent = isHidden ? 'Hide Details' : 'Show Details';
+    });
+
+    // --- Cache Management Event Listeners ---
+    historyContainer.addEventListener('click', async e => {
+        const loadTarget = e.target.closest('span');
+        const deleteTarget = e.target.closest('.delete-history-item');
+
+        if (deleteTarget) {
+            const key = deleteTarget.dataset.cacheKey;
+            if (confirm(`Are you sure you want to delete the cache for "${key.split('|')[0]}"?`)) {
+                await idb.delete(STORES.search, key);
+                delete searchHistory[key];
+                renderHistory();
+
+                if (Object.keys(searchHistory).length === 0) {
+                    resultsContainer.style.display = 'none';
+                    associationControls.style.display = 'none';
+                }
+            }
+        } else if (loadTarget) {
+            await loadFromHistory(e);
+        }
+    });
+
+    clearAllHistoryBtn.addEventListener('click', () => {
+        clearCacheModal.style.display = 'block';
+    });
+
+    cancelClearCacheBtn.addEventListener('click', () => {
+        clearCacheModal.style.display = 'none';
+        confirmClearCacheCheck.checked = false;
+        alsoClearMembersCheck.checked = false;
+        holdToDeleteBtn.disabled = true;
+        deleteProgress.style.width = '0%';
+    });
+
+    confirmClearCacheCheck.addEventListener('change', () => {
+        holdToDeleteBtn.disabled = !confirmClearCacheCheck.checked;
+    });
+
+    let pressTimer = null;
+    let progressInterval = null;
+    const holdDuration = 3000;
+
+    const startHold = (e) => {
+        if (e.target.disabled) return;
+        e.preventDefault();
+
+        const startTime = Date.now();
+
+        pressTimer = setTimeout(async () => {
+            clearInterval(progressInterval);
+
+            await idb.clear(STORES.search);
+            searchHistory = {};
+
+            if (alsoClearMembersCheck.checked) {
+                await idb.clear(STORES.members);
+                globalMembersCache = {};
+            }
+
+            renderHistory();
+            resultsContainer.style.display = 'none';
+            associationControls.style.display = 'none';
+            cancelClearCacheBtn.click();
+        }, holdDuration);
+
+        progressInterval = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min((elapsed / holdDuration) * 100, 100);
+            deleteProgress.style.width = `${progress}%`;
+        }, 50);
+    };
+
+    const cancelHold = () => {
+        clearTimeout(pressTimer);
+        clearInterval(progressInterval);
+        deleteProgress.style.width = '0%';
+    };
+
+    holdToDeleteBtn.addEventListener('mousedown', startHold);
+    holdToDeleteBtn.addEventListener('mouseup', cancelHold);
+    holdToDeleteBtn.addEventListener('mouseleave', cancelHold);
+    holdToDeleteBtn.addEventListener('touchstart', startHold, { passive: false });
+    holdToDeleteBtn.addEventListener('touchend', cancelHold);
+
+    // --- Info Modal Logic ---
+    const infoModal = document.getElementById('infoModal');
+    const showInfoBtn = document.getElementById('showInfoBtn');
+    const closeInfoModalBtn = document.getElementById('closeInfoModalBtn');
+
+    showInfoBtn.addEventListener('click', () => {
+        infoModal.classList.remove('hidden');
+    });
+
+    closeInfoModalBtn.addEventListener('click', () => {
+        infoModal.classList.add('hidden');
+    });
+
+    // Close modal by clicking on the background overlay
+    infoModal.addEventListener('click', (e) => {
+        if (e.target === infoModal) {
+            infoModal.classList.add('hidden');
+        }
+    });
+
+    // Close modal with the Escape key
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !infoModal.classList.contains('hidden')) {
+            infoModal.classList.add('hidden');
+        }
+    });
+</script>
+
+</body>
+</html>
